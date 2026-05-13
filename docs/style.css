@@ -551,3 +551,11 @@ table.event-table .col-action { white-space: nowrap; text-align: right; }
   white-space: pre-wrap;
   word-wrap: break-word;
 }
+
+/* ── Footer ──────────────────────────────────────────────── */
+footer {
+  text-align: center;
+  padding: .75rem 1rem;
+  font-size: .75rem;
+  color: var(--text-muted);
+}

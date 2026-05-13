@@ -25,6 +25,22 @@ async function initApp() {
   ALL_EVENTS  = await res.json();
   EVENT_INDEX = {};
   for (const ev of ALL_EVENTS) EVENT_INDEX[ev.id] = ev;
+
+  // Load version info and render footer
+  try {
+    const vres = await fetch('version.json');
+    if (vres.ok) {
+      const { built, count } = await vres.json();
+      const d = new Date(built);
+      const label = `${count.toLocaleString()} events · built ${d.toLocaleString(undefined, {
+        month: 'short', day: 'numeric', year: 'numeric',
+        hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+      })}`;
+      for (const el of document.querySelectorAll('.version-label')) {
+        el.textContent = label;
+      }
+    }
+  } catch { /* non-fatal */ }
 }
 
 // ── Time utilities ────────────────────────────────────────────

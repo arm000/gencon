@@ -5,12 +5,14 @@ import io
 import json
 import os
 import zipfile
+from datetime import datetime, timezone
 
 import requests
 import openpyxl
 
 EVENTS_URL = "https://www.gencon.com/downloads/events.zip"
-OUT_PATH = os.path.join(os.path.dirname(__file__), "..", "docs", "events.json")
+OUT_PATH     = os.path.join(os.path.dirname(__file__), "..", "docs", "events.json")
+VERSION_PATH = os.path.join(os.path.dirname(__file__), "..", "docs", "version.json")
 
 # CSV column → JSON field name. Columns not listed here are dropped.
 FIELD_MAP = [
@@ -111,6 +113,15 @@ def main() -> None:
 
     size_mb = os.path.getsize(out_path) / 1_048_576
     print(f"Wrote {len(events):,} events to {out_path} ({size_mb:.1f} MB)")
+
+    version = {
+        "built": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "count": len(events),
+    }
+    ver_path = os.path.abspath(VERSION_PATH)
+    with open(ver_path, "w", encoding="utf-8") as f:
+        json.dump(version, f)
+    print(f"Wrote {ver_path}")
 
 
 if __name__ == "__main__":
