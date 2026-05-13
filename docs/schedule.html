@@ -496,6 +496,9 @@ function initAiPanel() {
   const goBtn  = document.getElementById('ai-go');
   const output = document.getElementById('ai-output');
 
+  let convMessages = null;
+  let convSystem   = null;
+
   // Delegate clicks on AI-rendered event cards
   output.addEventListener('click', e => {
     const addBtn  = e.target.closest('.btn-ai-add');
@@ -504,12 +507,96 @@ function initAiPanel() {
     if (titleEl) openDetail(titleEl.dataset.id);
   });
 
+  function renderTurn(textAccum) {
+    let html = `<div class="ai-result">${marked.parse(textAccum)}</div>`;
+    const ids = extractEventIds(textAccum);
+    if (ids.length) {
+      html += '<div class="ai-event-list">';
+      for (const id of ids) {
+        const ev = EVENT_INDEX[id];
+        if (!ev) continue;
+        const s = parseTime(ev.start), e = parseTime(ev.end);
+        const slot = s && e ? `${fmtTime(s)}–${fmtTime(e)}` : '';
+        html += `<div class="suggest-event">
+          <span class="sug-time">${esc(slot)}</span>
+          <span class="sug-title" data-id="${esc(ev.id)}">${esc(ev.title)}</span>
+          <span class="sug-avail">${fmtAvail(ev.ticketsAvailable)}</span>
+          <span class="sug-add"><button class="btn btn-primary btn-sm btn-ai-add" data-id="${esc(ev.id)}">+ Add</button></span>
+        </div>`;
+      }
+      html += '</div>';
+    }
+    return html;
+  }
+
+  function appendProgress(msg) {
+    // Remove existing follow-up input if present before adding progress
+    const existing = output.querySelector('.ai-follow-up-row');
+    if (existing) existing.remove();
+    output.insertAdjacentHTML('beforeend', `<span class="ai-progress-line">${esc(msg)}</span>`);
+    output.scrollTop = output.scrollHeight;
+  }
+
+  function showFollowUp() {
+    output.insertAdjacentHTML('beforeend', `
+      <div class="ai-follow-up-row">
+        <input type="text" class="ai-follow-up-input" placeholder="Ask a follow-up…">
+        <button class="btn btn-secondary btn-sm ai-follow-up-send">Send</button>
+      </div>
+    `);
+    const row   = output.querySelector('.ai-follow-up-row');
+    const input = row.querySelector('.ai-follow-up-input');
+    const send  = row.querySelector('.ai-follow-up-send');
+    input.focus();
+
+    function submitFollowUp() {
+      const text = input.value.trim();
+      if (!text) return;
+
+      // Append user message to conversation
+      convMessages = [...convMessages, { role: 'user', content: text }];
+      row.remove();
+
+      // Show user message + spinner
+      output.insertAdjacentHTML('beforeend',
+        `<div class="ai-user-msg">${esc(text)}</div>` +
+        `<span class="ai-progress-line">Asking Karkarol…</span>`
+      );
+      output.scrollTop = output.scrollHeight;
+
+      let textAccum = '';
+      runAiSuggest(
+        { existingMessages: convMessages, existingSystemPrompt: convSystem },
+        msg => appendProgress(msg),
+        chunk => { textAccum += chunk; },
+        ({ messages, systemPrompt }) => {
+          convMessages = messages;
+          convSystem   = systemPrompt;
+          output.insertAdjacentHTML('beforeend', renderTurn(textAccum));
+          showFollowUp();
+          output.scrollTop = output.scrollHeight;
+        },
+        err => {
+          output.insertAdjacentHTML('beforeend',
+            `<span style="color:var(--danger-text)">${esc(err.message)}</span>`);
+          showFollowUp();
+        },
+      );
+    }
+
+    send.addEventListener('click', submitFollowUp);
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') submitFollowUp(); });
+  }
+
   goBtn.addEventListener('click', () => {
     const count     = parseInt(document.getElementById('ai-count').value, 10) || 4;
     const day       = document.getElementById('ai-day').value;
     const eventType = document.getElementById('ai-type').value;
     const minDur    = parseFloat(document.getElementById('ai-min-dur').value) || 0;
     const maxDur    = parseFloat(document.getElementById('ai-max-dur').value) || 0;
+
+    convMessages = null;
+    convSystem   = null;
 
     output.style.display = '';
     output.innerHTML = '<span class="ai-progress-line">Asking Karkarol…</span>';
@@ -519,47 +606,16 @@ function initAiPanel() {
 
     runAiSuggest(
       { count, day, eventType, minDur, maxDur },
-      // onProgress — tool call status
-      msg => {
-        output.innerHTML += `\n<span class="ai-progress-line">${esc(msg)}</span>`;
-        output.scrollTop = output.scrollHeight;
-      },
-      // onText — Claude's final response text
-      chunk => {
-        textAccum += chunk;
-      },
-      // onDone
-      () => {
+      msg => appendProgress(msg),
+      chunk => { textAccum += chunk; },
+      ({ messages, systemPrompt }) => {
         goBtn.disabled = false;
-
-        // Render markdown text
-        let html = `<div class="ai-result">${marked.parse(textAccum)}</div>`;
-
-        // Render interactive event cards for any IDs Claude mentioned
-        const ids = extractEventIds(textAccum);
-        if (ids.length) {
-          html += '<div class="ai-event-list">';
-          for (const id of ids) {
-            const ev = EVENT_INDEX[id];
-            if (!ev) continue;
-            const s = parseTime(ev.start), e = parseTime(ev.end);
-            const slot = s && e ? `${fmtTime(s)}–${fmtTime(e)}` : '';
-            html += `<div class="suggest-event">
-              <span class="sug-time">${esc(slot)}</span>
-              <span class="sug-title" data-id="${esc(ev.id)}">${esc(ev.title)}</span>
-              <span class="sug-avail">${fmtAvail(ev.ticketsAvailable)}</span>
-              <span class="sug-add">
-                <button class="btn btn-primary btn-sm btn-ai-add" data-id="${esc(ev.id)}">+ Add</button>
-              </span>
-            </div>`;
-          }
-          html += '</div>';
-        }
-
-        output.innerHTML = html;
+        convMessages = messages;
+        convSystem   = systemPrompt;
+        output.innerHTML = renderTurn(textAccum);
+        showFollowUp();
         output.scrollTop = 0;
       },
-      // onError
       err => {
         goBtn.disabled = false;
         output.innerHTML = `<span style="color:var(--danger-text)">${esc(err.message)}</span>`;

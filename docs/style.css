@@ -574,3 +574,24 @@ footer {
   border-radius: 3px;
   font-size: .85em;
 }
+
+.ai-follow-up-row {
+  display: flex;
+  gap: .4rem;
+  margin-top: .6rem;
+  padding-top: .6rem;
+  border-top: 1px solid var(--border);
+}
+.ai-follow-up-input {
+  flex: 1;
+  min-width: 0;
+}
+.ai-user-msg {
+  margin: .5rem 0 .25rem;
+  padding: .35rem .6rem;
+  background: var(--orange-light);
+  border-left: 3px solid var(--orange);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: .82rem;
+  word-wrap: break-word;
+}

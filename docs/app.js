@@ -518,51 +518,56 @@ function executeAiTool(name, input) {
 
 /**
  * Run the AI suggest agentic loop.
- * @param {{ count, day, eventType, workerUrl }} opts
- * @param {function(string)} onProgress  Progress message during tool calls
- * @param {function(string)} onText      Text chunks from Claude's final response
- * @param {function()}       onDone      Called on completion
- * @param {function(Error)}  onError     Called on failure
+ * Pass `existingMessages` + `existingSystemPrompt` to continue a prior conversation.
+ * onDone receives { messages, systemPrompt } so the caller can continue the thread.
  */
-async function runAiSuggest({ count, day: rawDay, eventType, minDur = 0, maxDur = 0 }, onProgress, onText, onDone, onError) {
-  const scheduledEvents = getScheduledEvents();
-  if (!scheduledEvents.length) {
-    onError(new Error('No events scheduled yet — add some events first so I can learn your tastes.'));
-    return;
+async function runAiSuggest(
+  { count, day: rawDay, eventType, minDur = 0, maxDur = 0,
+    existingMessages = null, existingSystemPrompt = null },
+  onProgress, onText, onDone, onError,
+) {
+  let systemPrompt = existingSystemPrompt;
+  let messages     = existingMessages;
+
+  // First turn — build system prompt and initial user message
+  if (!messages) {
+    const scheduledEvents = getScheduledEvents();
+    if (!scheduledEvents.length) {
+      onError(new Error('No events scheduled yet — add some events first so I can learn your tastes.'));
+      return;
+    }
+
+    const scheduleDesc = scheduledEvents
+      .map(ev => `- ${ev.title} (${shortType(ev.type)}, ${fmtSlot(ev)})${ev.system ? `, ${ev.system}` : ''}`)
+      .join('\n');
+
+    const { day, timeOfDay } = parseDayFilter(rawDay);
+    const TOD_DESC = { morning: 'before noon', afternoon: 'noon–6 PM', evening: '6 PM or later' };
+    const dayDesc  = day ? day + (timeOfDay ? ` (${TOD_DESC[timeOfDay] || timeOfDay})` : '') : null;
+
+    systemPrompt =
+      `You are a GenCon event planning assistant. The user has these events in their schedule:\n\n${scheduleDesc}\n\n` +
+      `Based on their interests, use the search_events tool to find events they'd enjoy. ` +
+      `Use get_event_details when you need more information about a specific event. ` +
+      `Suggest exactly ${count} events they don't already have scheduled` +
+      (dayDesc    ? ` on ${dayDesc}`         : '') +
+      (eventType  ? ` of type ${eventType}`  : '') +
+      `. Only suggest events with tickets available (tickets > 0). ` +
+      (timeOfDay  ? `Only suggest events that START ${TOD_DESC[timeOfDay] || timeOfDay}. ` : '') +
+      (minDur > 0 ? `Only suggest events at least ${minDur}h long. ` : '') +
+      (maxDur > 0 ? `Only suggest events no longer than ${maxDur}h. ` : '') +
+      `For each suggestion include: Game ID, title, time, and a short reason why it fits their tastes.`;
+
+    const userMsg =
+      `Please suggest ${count} events I'd enjoy based on my schedule` +
+      (dayDesc    ? `, specifically on ${dayDesc}`           : '') +
+      (eventType  ? `, preferably ${eventType} type events`  : '') +
+      (minDur > 0 ? `, at least ${minDur}h long`            : '') +
+      (maxDur > 0 ? `, no longer than ${maxDur}h`           : '') +
+      `.`;
+
+    messages = [{ role: 'user', content: userMsg }];
   }
-
-  const scheduleDesc = scheduledEvents
-    .map(ev => `- ${ev.title} (${shortType(ev.type)}, ${fmtSlot(ev)})${ev.system ? `, ${ev.system}` : ''}`)
-    .join('\n');
-
-  const { day, timeOfDay } = parseDayFilter(rawDay);
-  const TOD_DESC = { morning: 'before noon', afternoon: 'noon–6 PM', evening: '6 PM or later' };
-  const dayDesc = day
-    ? day + (timeOfDay ? ` (${TOD_DESC[timeOfDay] || timeOfDay})` : '')
-    : null;
-
-  const systemPrompt =
-    `You are a GenCon event planning assistant. The user has these events in their schedule:\n\n${scheduleDesc}\n\n` +
-    `Based on their interests, use the search_events tool to find events they'd enjoy. ` +
-    `Use get_event_details when you need more information about a specific event. ` +
-    `Suggest exactly ${count} events they don't already have scheduled` +
-    (dayDesc    ? ` on ${dayDesc}`         : '') +
-    (eventType  ? ` of type ${eventType}`  : '') +
-    `. Only suggest events with tickets available (tickets > 0). ` +
-    (timeOfDay  ? `Only suggest events that START ${TOD_DESC[timeOfDay] || timeOfDay}. ` : '') +
-    (minDur > 0 ? `Only suggest events at least ${minDur}h long. ` : '') +
-    (maxDur > 0 ? `Only suggest events no longer than ${maxDur}h. ` : '') +
-    `For each suggestion include: Game ID, title, time, and a short reason why it fits their tastes.`;
-
-  const userMsg =
-    `Please suggest ${count} events I'd enjoy based on my schedule` +
-    (dayDesc    ? `, specifically on ${dayDesc}`            : '') +
-    (eventType  ? `, preferably ${eventType} type events`   : '') +
-    (minDur > 0 ? `, at least ${minDur}h long`             : '') +
-    (maxDur > 0 ? `, no longer than ${maxDur}h`            : '') +
-    `.`;
-
-  const messages = [{ role: 'user', content: userMsg }];
 
   try {
     for (let i = 0; i < 12; i++) {
@@ -593,7 +598,7 @@ async function runAiSuggest({ count, day: rawDay, eventType, minDur = 0, maxDur 
         for (const block of data.content) {
           if (block.type === 'text') onText(block.text);
         }
-        onDone();
+        onDone({ messages, systemPrompt });
         return;
       }
 
