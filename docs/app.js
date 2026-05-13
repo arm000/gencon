@@ -5,7 +5,7 @@
 // ── Configuration ────────────────────────────────────────────
 const EVENTS_JSON_URL = 'events.json';
 const STORAGE_KEY     = 'gencon-schedule-2026';
-const CONV_DATES      = ['07/30', '07/31', '08/01', '08/02', '08/03'];
+const CONV_DATES      = ['07/30', '07/31', '08/01', '08/02'];
 const DAYS_MAP        = { '07/30': 'Thu', '07/31': 'Fri', '08/01': 'Sat', '08/02': 'Sun' };
 const DAY_DATES       = { 'Thu': '07/30', 'Fri': '07/31', 'Sat': '08/01', 'Sun': '08/02' };
 const DAY_START_HOUR  = 8;   // 8 AM — earlier events ignored in gap calc
