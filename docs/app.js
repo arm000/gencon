@@ -6,8 +6,8 @@
 const EVENTS_JSON_URL = 'events.json';
 const STORAGE_KEY     = 'gencon-schedule-2026';
 const CONV_DATES      = ['07/30', '07/31', '08/01', '08/02', '08/03'];
-const DAYS_MAP        = { '07/30': 'Thu', '07/31': 'Fri', '08/01': 'Sat', '08/02': 'Sun', '08/03': 'Mon' };
-const DAY_DATES       = { 'Thu': '07/30', 'Fri': '07/31', 'Sat': '08/01', 'Sun': '08/02', 'Mon': '08/03' };
+const DAYS_MAP        = { '07/30': 'Thu', '07/31': 'Fri', '08/01': 'Sat', '08/02': 'Sun' };
+const DAY_DATES       = { 'Thu': '07/30', 'Fri': '07/31', 'Sat': '08/01', 'Sun': '08/02' };
 const DAY_START_HOUR  = 8;   // 8 AM — earlier events ignored in gap calc
 const DAY_END_HOUR    = 24;  // midnight
 const SEARCH_FIELDS   = ['title', 'shortDesc', 'longDesc', 'system', 'gmNames', 'type'];
@@ -436,7 +436,7 @@ const AI_TOOLS = [
       properties: {
         query:       { type: 'string',  description: 'Full-text search across title, description, game system, GM names' },
         event_type:  { type: 'string',  description: 'Filter by type prefix, e.g. "RPG", "BGM", "SEM", "TCG"' },
-        day:         { type: 'string',  description: 'Filter by convention day: "Thu", "Fri", "Sat", "Sun", or "Mon"' },
+        day:         { type: 'string',  description: 'Filter by convention day: "Thu", "Fri", "Sat", or "Sun"' },
         system:      { type: 'string',  description: 'Filter by game system substring, e.g. "D&D", "Pathfinder"' },
         min_tickets: { type: 'integer', description: 'Minimum tickets available (use 1 to exclude sold-out events)' },
         min_dur:     { type: 'number',  description: 'Minimum event duration in hours' },
