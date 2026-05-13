@@ -8,7 +8,7 @@ import json
 import os
 import sys
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import requests
 from tabulate import tabulate
@@ -31,6 +31,11 @@ DAYS = {
     "08/02": "Sun",
     "08/03": "Mon",
 }
+CONV_DATES = list(DAYS.keys())
+
+# Default convention day window for gap calculation (hour of day, 24h)
+DAY_START_HOUR = 8   # 8:00 AM — before this is ignored for suggestions
+DAY_END_HOUR = 24    # midnight
 
 # Columns displayed in search results
 DISPLAY_COLS = [
@@ -485,6 +490,175 @@ def schedule_clear() -> None:
         print("Schedule cleared.")
 
 
+def schedule_suggest(
+    day: str | None,
+    event_type: str | None,
+    system: str | None,
+    min_dur: float | None,
+    max_dur: float | None,
+    min_tickets: int | None,
+    per_gap: int,
+) -> None:
+    """Suggest events that fit into free gaps in the schedule."""
+    events = load_events()
+    ids = _load_schedule()
+    idx = _event_index(events)
+    scheduled_ids = set(ids)
+
+    # Determine which days to process
+    dates_to_check = CONV_DATES
+    if day:
+        dl = day.lower()
+        dates_to_check = [
+            d for d in CONV_DATES
+            if dl in DAYS.get(d, "").lower() or dl in d
+        ]
+        if not dates_to_check:
+            print(f"No GenCon days matched {day!r}. Use Thu/Fri/Sat/Sun/Mon or a date like 07/30.")
+            return
+
+    # Index all unscheduled events by their date prefix for fast gap filling
+    by_date: dict[str, list[dict]] = {}
+    for ev in events:
+        gid = ev.get("Game ID", "")
+        if gid in scheduled_ids:
+            continue
+        start = ev.get("Start Date & Time", "")
+        if not start:
+            continue
+        date_key = start[:5]
+        by_date.setdefault(date_key, []).append(ev)
+
+    total_suggestions = 0
+
+    for date_key in dates_to_check:
+        day_label = DAYS.get(date_key, date_key)
+
+        # Build the scheduled timeline for this day (including events that started
+        # the previous day but run into this one)
+        day_dt = datetime.strptime(f"{date_key}/2026", "%m/%d/%Y")
+        wall_start = day_dt.replace(hour=DAY_START_HOUR)
+        wall_end = day_dt + timedelta(hours=DAY_END_HOUR)  # DAY_END_HOUR=24 → midnight
+
+        # Collect scheduled events that overlap this day's wall window
+        day_scheduled: list[tuple[datetime, datetime, dict]] = []
+        for gid in ids:
+            ev = idx.get(gid)
+            if not ev:
+                continue
+            t = _parse_event_times(ev)
+            if t and t[0] < wall_end and t[1] > wall_start:
+                day_scheduled.append((t[0], t[1], ev))
+        day_scheduled.sort()
+
+        # Compute free gaps within the wall window
+        gaps: list[tuple[datetime, datetime]] = []
+        cursor = wall_start
+        for ev_start, ev_end, _ in day_scheduled:
+            gap_s = max(cursor, wall_start)
+            gap_e = min(ev_start, wall_end)
+            if gap_e > gap_s:
+                gaps.append((gap_s, gap_e))
+            cursor = max(cursor, ev_end)
+        # Trailing gap
+        if cursor < wall_end:
+            gaps.append((max(cursor, wall_start), wall_end))
+
+        if not gaps:
+            continue
+
+        # For each gap, find events that fit entirely within it
+        candidate_events = by_date.get(date_key, [])
+
+        printed_day_header = False
+
+        for gap_start, gap_end in gaps:
+            gap_hours = (gap_end - gap_start).total_seconds() / 3600
+            if gap_hours < 0.5:
+                continue
+
+            fits: list[tuple[float, float, dict]] = []  # (score, dur, ev)
+            for ev in candidate_events:
+                t = _parse_event_times(ev)
+                if not t:
+                    continue
+                ev_start, ev_end = t
+                if ev_start < gap_start or ev_end > gap_end:
+                    continue
+
+                # Apply user filters
+                if event_type and event_type.lower() not in (ev.get("Event Type") or "").lower():
+                    continue
+                if system and system.lower() not in (ev.get("Game System") or "").lower():
+                    continue
+                try:
+                    dur = float(ev.get("Duration") or 0)
+                except ValueError:
+                    dur = 0
+                if min_dur is not None and dur < min_dur:
+                    continue
+                if max_dur is not None and dur > max_dur:
+                    continue
+                try:
+                    avail = int(ev.get("Tickets Available") or 0)
+                except ValueError:
+                    avail = 0
+                if min_tickets is not None and avail < min_tickets:
+                    continue
+
+                # Score: prefer events that fill more of the gap, then by availability
+                fill_ratio = dur / gap_hours if gap_hours > 0 else 0
+                fits.append((fill_ratio, avail, dur, ev))
+
+            if not fits:
+                continue
+
+            # Sort: best fill ratio first, break ties by availability
+            fits.sort(key=lambda x: (-x[0], -x[1]))
+
+            if not printed_day_header:
+                print(f"\n{'═' * 64}")
+                print(f"  {day_label}  ({day_dt.strftime('%B %-d')})")
+                print(f"{'═' * 64}")
+                printed_day_header = True
+
+            gs = gap_start.strftime("%-I:%M %p")
+            ge = gap_end.strftime("%-I:%M %p")
+            total_fit = len(fits)
+            print(f"\n  Gap: {gs} – {ge}  ({gap_hours:.1f}h free, {total_fit} event(s) fit)")
+            print(f"  {'─' * 60}")
+
+            rows = []
+            for fill_ratio, avail, dur, ev in fits[:per_gap]:
+                t = _parse_event_times(ev)
+                slot = (
+                    f"{t[0].strftime('%-I:%M')}-{t[1].strftime('%-I:%M %p')}"
+                    if t else "?"
+                )
+                title = ev.get("Title", "")
+                if len(title) > 36:
+                    title = title[:33] + "..."
+                etype = (ev.get("Event Type") or "").split(" - ")[0]
+                cost = ev.get("Cost $", "")
+                rows.append([ev.get("Game ID", ""), slot, title, etype, avail, cost])
+
+            print(tabulate(
+                rows,
+                headers=["Game ID", "Time", "Title", "Type", "Avail", "$"],
+                tablefmt="plain",
+                colalign=("left", "left", "left", "left", "right", "right"),
+            ))
+
+            if total_fit > per_gap:
+                remaining = total_fit - per_gap
+                print(f"  … {remaining} more fit this gap. Use -t/-s/--min/--max to narrow.")
+
+            total_suggestions += min(total_fit, per_gap)
+
+    if total_suggestions == 0:
+        print("No suggestions found. Try relaxing your filters or checking different days.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="GenCon 2026 event downloader and search tool"
@@ -533,6 +707,15 @@ def main() -> None:
 
     sc_sub.add_parser("clear", help="Remove all events from your schedule")
 
+    sc_sug = sc_sub.add_parser("suggest", help="Suggest events that fit gaps in your schedule")
+    sc_sug.add_argument("-d", "--day", help="Limit to a specific day (e.g. Thu, Fri, Sat)")
+    sc_sug.add_argument("-t", "--type", dest="event_type", help="Filter by event type (e.g. RPG, BGM)")
+    sc_sug.add_argument("-s", "--system", help="Filter by game system")
+    sc_sug.add_argument("--min", dest="min_dur", type=float, help="Minimum event duration in hours")
+    sc_sug.add_argument("--max", dest="max_dur", type=float, help="Maximum event duration in hours")
+    sc_sug.add_argument("-k", "--tickets", type=int, dest="min_tickets", help="Minimum available tickets")
+    sc_sug.add_argument("-n", "--per-gap", type=int, default=5, help="Suggestions per gap (default: 5)")
+
     args = parser.parse_args()
 
     if args.cmd == "download":
@@ -563,6 +746,16 @@ def main() -> None:
             schedule_alternatives(args.game_id)
         elif args.sc_cmd == "clear":
             schedule_clear()
+        elif args.sc_cmd == "suggest":
+            schedule_suggest(
+                day=args.day,
+                event_type=args.event_type,
+                system=args.system,
+                min_dur=args.min_dur,
+                max_dur=args.max_dur,
+                min_tickets=args.min_tickets,
+                per_gap=args.per_gap,
+            )
 
 
 if __name__ == "__main__":
