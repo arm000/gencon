@@ -67,7 +67,9 @@
             </select>
           </label>
           <label>Prefer type
-            <input type="text" id="ai-type" placeholder="e.g. RPG" style="width:72px">
+            <select id="ai-type">
+              <option value="">Any type</option>
+            </select>
           </label>
         </div>
 
@@ -314,12 +316,14 @@ function renderSuggestions() {
 }
 
 function populateSuggestTypeFilter() {
-  const sel = document.getElementById('sug-type');
-  for (const t of allTypes()) {
-    const opt = document.createElement('option');
-    opt.value       = t.split(' - ')[0];
-    opt.textContent = t;
-    sel.appendChild(opt);
+  for (const selId of ['sug-type', 'ai-type']) {
+    const sel = document.getElementById(selId);
+    for (const t of allTypes()) {
+      const opt = document.createElement('option');
+      opt.value       = t.split(' - ')[0];
+      opt.textContent = t;
+      sel.appendChild(opt);
+    }
   }
 }
 
@@ -497,7 +501,7 @@ function initAiPanel() {
   goBtn.addEventListener('click', () => {
     const count     = parseInt(document.getElementById('ai-count').value, 10) || 4;
     const day       = document.getElementById('ai-day').value;
-    const eventType = document.getElementById('ai-type').value.trim();
+    const eventType = document.getElementById('ai-type').value;
 
     output.style.display = '';
     output.innerHTML = '<span class="ai-progress-line">Asking Claude…</span>';
