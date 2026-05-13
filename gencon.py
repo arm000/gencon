@@ -659,6 +659,357 @@ def schedule_suggest(
         print("No suggestions found. Try relaxing your filters or checking different days.")
 
 
+# ---------------------------------------------------------------------------
+# AI-powered event suggestions
+# ---------------------------------------------------------------------------
+
+def _ai_search_events(
+    params: dict,
+    scheduled_ids: list[str],
+    idx: dict[str, dict],
+    all_events: list[dict],
+) -> str:
+    """Execute the search_events tool call and return a formatted string for Claude."""
+    query      = (params.get("query") or "").strip()
+    event_type = (params.get("event_type") or "").strip()
+    day        = (params.get("day") or "").strip()
+    system     = (params.get("system") or "").strip()
+    min_tickets = int(params.get("min_tickets") or 0)
+    min_dur     = float(params.get("min_dur") or 0)
+    max_dur     = float(params.get("max_dur") or 0)
+    limit       = min(int(params.get("limit") or 12), 25)
+
+    query_lower = query.lower()
+    scheduled_evs = [idx[i] for i in scheduled_ids if i in idx]
+    results: list[dict] = []
+
+    for ev in all_events:
+        if ev.get("Game ID") in scheduled_ids:
+            continue
+        if query_lower and not any(
+            query_lower in (ev.get(col) or "").lower() for col in SEARCH_COLS
+        ):
+            continue
+        if event_type and event_type.lower() not in (ev.get("Event Type") or "").lower():
+            continue
+        if day:
+            prefix = (ev.get("Start Date & Time") or "")[:5]
+            label  = DAYS.get(prefix, "")
+            if not label.lower().startswith(day.lower()) and not prefix.startswith(day):
+                continue
+        if system and system.lower() not in (ev.get("Game System") or "").lower():
+            continue
+        try:
+            avail = int(ev.get("Tickets Available") or 0)
+        except ValueError:
+            avail = 0
+        if min_tickets > 0 and avail < min_tickets:
+            continue
+        try:
+            dur = float(ev.get("Duration") or 0)
+        except ValueError:
+            dur = 0
+        if min_dur > 0 and dur < min_dur:
+            continue
+        if max_dur > 0 and dur > max_dur:
+            continue
+        results.append(ev)
+
+    total = len(results)
+    shown = results[:limit]
+
+    lines = [f"Found {total} matching events (showing {len(shown)}):"]
+    for ev in shown:
+        gid  = ev.get("Game ID", "")
+        cfls = _find_conflicts(ev, scheduled_evs)
+        flag = " [CONFLICTS WITH SCHEDULE]" if cfls else ""
+        try:
+            avail_n = int(ev.get("Tickets Available") or 0)
+        except ValueError:
+            avail_n = 0
+        short = (ev.get("Short Description") or "")[:100]
+        lines.append(
+            f"\n{gid}: {ev.get('Title', '')}{flag}\n"
+            f"  Type: {ev.get('Event Type', '')} | System: {ev.get('Game System', '')}\n"
+            f"  When: {_fmt_slot(ev)} | Duration: {ev.get('Duration', '')}h\n"
+            f"  Location: {ev.get('Location', '')} {ev.get('Room Name', '')}\n"
+            f"  Tickets: {avail_n} | Cost: ${ev.get('Cost $', '0')}\n"
+            f"  {short}"
+        )
+    return "\n".join(lines)
+
+
+def _ai_get_event_details(
+    game_id: str,
+    scheduled_ids: list[str],
+    idx: dict[str, dict],
+) -> str:
+    """Execute the get_event_details tool call."""
+    ev = idx.get(game_id.strip())
+    if not ev:
+        return f"Event {game_id!r} not found in the catalog."
+
+    scheduled_evs = [idx[i] for i in scheduled_ids if i in idx]
+    cfls = _find_conflicts(ev, scheduled_evs)
+
+    if game_id in scheduled_ids:
+        status = "Already in your schedule."
+    elif cfls:
+        status = "CONFLICTS with: " + ", ".join(
+            f"{c.get('Game ID')} ({c.get('Title', '')})" for c in cfls
+        )
+    else:
+        status = "Free — no conflicts with your schedule."
+
+    try:
+        avail = int(ev.get("Tickets Available") or 0)
+    except ValueError:
+        avail = 0
+
+    return (
+        f"Game ID: {game_id}\n"
+        f"Title: {ev.get('Title', '')}\n"
+        f"Type: {ev.get('Event Type', '')}\n"
+        f"System: {ev.get('Game System', '')} ({ev.get('Rules Edition', '')})\n"
+        f"When: {_fmt_slot(ev)}\n"
+        f"Duration: {ev.get('Duration', '')}h\n"
+        f"GM: {ev.get('GM Names', '')}\n"
+        f"Location: {ev.get('Location', '')} · {ev.get('Room Name', '')} · Table {ev.get('Table Number', '')}\n"
+        f"Players: {ev.get('Minimum Players', '')}–{ev.get('Maximum Players', '')}\n"
+        f"Age: {ev.get('Age Required', '')} | Experience: {ev.get('Experience Required', '')}\n"
+        f"Tournament: {ev.get('Tournament?', '')} | Cost: ${ev.get('Cost $', '0')} | Tickets: {avail}\n"
+        f"Group: {ev.get('Group', '')}\n"
+        f"Summary: {ev.get('Short Description', '')}\n"
+        f"Description: {ev.get('Long Description', '')}\n"
+        f"Schedule status: {status}"
+    )
+
+
+def _tool_label(name: str, tool_input: dict) -> str:
+    """Short human-readable label for a tool call (shown in terminal)."""
+    if name == "search_events":
+        parts = []
+        if tool_input.get("query"):      parts.append(f'"{tool_input["query"]}"')
+        if tool_input.get("event_type"): parts.append(tool_input["event_type"])
+        if tool_input.get("system"):     parts.append(tool_input["system"])
+        if tool_input.get("day"):        parts.append(tool_input["day"])
+        desc = ", ".join(parts) if parts else "all events"
+        return f"Searching: {desc}"
+    if name == "get_event_details":
+        return f"Looking up: {tool_input.get('game_id', '?')}"
+    return f"Calling: {name}"
+
+
+def schedule_ai_suggest(
+    count: int,
+    day: str | None,
+    event_type: str | None,
+) -> None:
+    """Use Claude to suggest events tailored to the user's schedule preferences."""
+    try:
+        import anthropic as _ant
+    except ImportError:
+        print(
+            "The 'anthropic' package is required for AI suggestions.\n"
+            "Install it with: pip install anthropic",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    ids = _load_schedule()
+    if not ids:
+        print("Your schedule is empty — add some events first so the AI can learn your tastes.")
+        print("Try: python gencon.py schedule add <GAME_ID>")
+        return
+
+    events    = load_events()
+    idx       = _event_index(events)
+    scheduled = [idx[i] for i in ids if i in idx]
+
+    # Build a readable schedule summary for the system prompt
+    sorted_sched = sorted(
+        scheduled,
+        key=lambda e: (_parse_event_times(e) or (datetime.min, datetime.min))[0],
+    )
+    sched_lines = [
+        f"  [{ev.get('Game ID','')}] {ev.get('Title','')} | "
+        f"{(ev.get('Event Type','') or '').split(' - ')[0]} | "
+        f"{ev.get('Game System','')} | "
+        f"{_fmt_slot(ev)} | "
+        f"{(ev.get('Short Description','') or '')[:80]}"
+        for ev in sorted_sched
+    ]
+    schedule_summary = "\n".join(sched_lines)
+
+    # Compute free gaps so Claude knows what time is available
+    gap_lines: list[str] = []
+    for g in getSuggestions({}):
+        gs = g["gapStart"].strftime("%-I:%M %p")
+        ge = g["gapEnd"].strftime("%-I:%M %p")
+        gap_lines.append(f"  {g['dayLabel']} {gs} – {ge} ({g['gapHours']:.1f}h free)")
+    gap_summary = "\n".join(gap_lines) if gap_lines else "  (full days available)"
+
+    # --- Tool definitions ---------------------------------------------------
+    tools: list[dict] = [
+        {
+            "name": "search_events",
+            "description": (
+                "Search the GenCon 2026 event catalog. Returns up to `limit` events "
+                "matching the criteria, each annotated [CONFLICTS WITH SCHEDULE] if it "
+                "overlaps an event already on the user's schedule. Use multiple searches "
+                "with different queries to explore broadly."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Text search across title, descriptions, game system, GM names",
+                    },
+                    "event_type": {
+                        "type": "string",
+                        "description": "Event type prefix to filter by (e.g. 'RPG', 'BGM', 'TCG', 'WKS')",
+                    },
+                    "day": {
+                        "type": "string",
+                        "description": "Day to filter: Thu, Fri, Sat, Sun, or Mon",
+                    },
+                    "system": {
+                        "type": "string",
+                        "description": "Game system to filter by (e.g. 'Pathfinder', 'D&D', 'Cthulhu')",
+                    },
+                    "min_tickets": {
+                        "type": "integer",
+                        "description": "Minimum available tickets (use 1 to exclude sold-out events)",
+                    },
+                    "min_dur": {
+                        "type": "number",
+                        "description": "Minimum event duration in hours",
+                    },
+                    "max_dur": {
+                        "type": "number",
+                        "description": "Maximum event duration in hours",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max results to return (default 12, max 25)",
+                    },
+                },
+                "required": [],
+            },
+        },
+        {
+            "name": "get_event_details",
+            "description": (
+                "Get full details for a specific event by Game ID, including the long "
+                "description. Use this to read the full write-up before recommending."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "game_id": {
+                        "type": "string",
+                        "description": "The Game ID (e.g. RPG26ND300797)",
+                    }
+                },
+                "required": ["game_id"],
+            },
+        },
+    ]
+
+    # --- System prompt -------------------------------------------------------
+    focus_notes = []
+    if day:        focus_notes.append(f"The user wants suggestions specifically for: {day}")
+    if event_type: focus_notes.append(f"The user prefers event type: {event_type}")
+    focus_block = ("\n\nAdditional focus:\n" + "\n".join(focus_notes)) if focus_notes else ""
+
+    system = f"""You are a personalized GenCon 2026 event advisor. Your job is to recommend events the user will genuinely love, based on the specific patterns in their existing schedule.
+
+The user's current schedule ({len(scheduled)} events):
+{schedule_summary}
+
+Free time slots available:
+{gap_summary}{focus_block}
+
+Your process:
+1. Analyze the schedule carefully: what game systems, themes, event types, and duration ranges does the user clearly enjoy?
+2. Use search_events to find strong candidates — run several searches with different angles (by system, theme, type, keywords from their event titles/descriptions)
+3. Use get_event_details to read the full write-up for your top candidates before committing to a recommendation
+4. Only recommend events that DON'T conflict with the schedule (results are flagged [CONFLICTS WITH SCHEDULE])
+
+Deliver exactly {count} recommendations. For each one:
+- State the Game ID and title on its own line so it's easy to copy
+- Give the day/time and confirm it fits a free slot
+- Explain in 2–3 sentences specifically WHY this matches the user's demonstrated tastes — cite concrete things from their schedule
+- Note ticket availability so they know if they need to act fast
+
+Be opinionated and direct. Don't hedge. If something is a great fit, say so."""
+
+    messages: list[dict] = [
+        {
+            "role": "user",
+            "content": (
+                f"Based on my schedule, suggest {count} events I'd love."
+                + (f" Focus on {day}." if day else "")
+                + (f" I prefer {event_type} events." if event_type else "")
+                + " Be specific about why each one matches my tastes."
+            ),
+        }
+    ]
+
+    # --- Streaming agentic loop ---------------------------------------------
+    client = _ant.Anthropic()
+
+    print(f"\n{'─' * 64}")
+    print(f"  AI Suggestions  ·  {len(scheduled)} events analyzed  ·  {count} recommendations")
+    print(f"{'─' * 64}\n")
+
+    MAX_TURNS = 12
+    for _ in range(MAX_TURNS):
+        with client.messages.stream(
+            model="claude-opus-4-6",
+            max_tokens=4096,
+            system=system,
+            tools=tools,
+            messages=messages,
+            thinking={"type": "adaptive"},
+        ) as stream:
+            for event in stream:
+                if (
+                    event.type == "content_block_delta"
+                    and event.delta.type == "text_delta"
+                ):
+                    print(event.delta.text, end="", flush=True)
+            final = stream.get_final_message()
+
+        messages.append({"role": "assistant", "content": final.content})
+
+        if final.stop_reason != "tool_use":
+            break
+
+        # Execute tool calls and feed results back
+        tool_results = []
+        for block in final.content:
+            if block.type == "tool_use":
+                print(f"\n\n  [{_tool_label(block.name, block.input)}]\n", flush=True)
+                if block.name == "search_events":
+                    result = _ai_search_events(block.input, ids, idx, events)
+                elif block.name == "get_event_details":
+                    result = _ai_get_event_details(block.input.get("game_id", ""), ids, idx)
+                else:
+                    result = f"Unknown tool: {block.name}"
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": result,
+                })
+        messages.append({"role": "user", "content": tool_results})
+
+    print(f"\n\n{'─' * 64}")
+    print("  Use 'schedule add <GAME_ID>' to add any of these to your schedule.")
+    print(f"{'─' * 64}\n")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="GenCon 2026 event downloader and search tool"
@@ -716,6 +1067,11 @@ def main() -> None:
     sc_sug.add_argument("-k", "--tickets", type=int, dest="min_tickets", help="Minimum available tickets")
     sc_sug.add_argument("-n", "--per-gap", type=int, default=5, help="Suggestions per gap (default: 5)")
 
+    sc_ai = sc_sub.add_parser("ai-suggest", help="Use Claude AI to suggest events tailored to your tastes")
+    sc_ai.add_argument("-n", "--count", type=int, default=5, help="Number of suggestions (default: 5)")
+    sc_ai.add_argument("-d", "--day", help="Limit to a specific day (e.g. Thu, Fri)")
+    sc_ai.add_argument("-t", "--type", dest="event_type", help="Prefer a specific event type (e.g. RPG, BGM)")
+
     args = parser.parse_args()
 
     if args.cmd == "download":
@@ -755,6 +1111,12 @@ def main() -> None:
                 max_dur=args.max_dur,
                 min_tickets=args.min_tickets,
                 per_gap=args.per_gap,
+            )
+        elif args.sc_cmd == "ai-suggest":
+            schedule_ai_suggest(
+                count=args.count,
+                day=getattr(args, 'day', None),
+                event_type=getattr(args, 'event_type', None),
             )
 
 
