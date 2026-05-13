@@ -524,7 +524,7 @@ function executeAiTool(name, input) {
  * @param {function()}       onDone      Called on completion
  * @param {function(Error)}  onError     Called on failure
  */
-async function runAiSuggest({ count, day: rawDay, eventType }, onProgress, onText, onDone, onError) {
+async function runAiSuggest({ count, day: rawDay, eventType, minDur = 0, maxDur = 0 }, onProgress, onText, onDone, onError) {
   const scheduledEvents = getScheduledEvents();
   if (!scheduledEvents.length) {
     onError(new Error('No events scheduled yet — add some events first so I can learn your tastes.'));
@@ -550,12 +550,16 @@ async function runAiSuggest({ count, day: rawDay, eventType }, onProgress, onTex
     (eventType  ? ` of type ${eventType}`  : '') +
     `. Only suggest events with tickets available (tickets > 0). ` +
     (timeOfDay  ? `Only suggest events that START ${TOD_DESC[timeOfDay] || timeOfDay}. ` : '') +
+    (minDur > 0 ? `Only suggest events at least ${minDur}h long. ` : '') +
+    (maxDur > 0 ? `Only suggest events no longer than ${maxDur}h. ` : '') +
     `For each suggestion include: Game ID, title, time, and a short reason why it fits their tastes.`;
 
   const userMsg =
     `Please suggest ${count} events I'd enjoy based on my schedule` +
     (dayDesc    ? `, specifically on ${dayDesc}`            : '') +
     (eventType  ? `, preferably ${eventType} type events`   : '') +
+    (minDur > 0 ? `, at least ${minDur}h long`             : '') +
+    (maxDur > 0 ? `, no longer than ${maxDur}h`            : '') +
     `.`;
 
   const messages = [{ role: 'user', content: userMsg }];

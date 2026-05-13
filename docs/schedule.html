@@ -71,6 +71,12 @@
               <option value="">Any type</option>
             </select>
           </label>
+          <label>Dur (h)
+            <div class="filter-group">
+              <input type="number" id="ai-min-dur" placeholder="min" min="0" step="0.5" style="width:56px">
+              <input type="number" id="ai-max-dur" placeholder="max" min="0" step="0.5" style="width:56px">
+            </div>
+          </label>
         </div>
 
         <button class="btn btn-primary" id="ai-go">Ask AI</button>
@@ -502,6 +508,8 @@ function initAiPanel() {
     const count     = parseInt(document.getElementById('ai-count').value, 10) || 4;
     const day       = document.getElementById('ai-day').value;
     const eventType = document.getElementById('ai-type').value;
+    const minDur    = parseFloat(document.getElementById('ai-min-dur').value) || 0;
+    const maxDur    = parseFloat(document.getElementById('ai-max-dur').value) || 0;
 
     output.style.display = '';
     output.innerHTML = '<span class="ai-progress-line">Asking Claude…</span>';
@@ -510,7 +518,7 @@ function initAiPanel() {
     let textAccum = '';
 
     runAiSuggest(
-      { count, day, eventType },
+      { count, day, eventType, minDur, maxDur },
       // onProgress — tool call status
       msg => {
         output.innerHTML += `\n<span class="ai-progress-line">${esc(msg)}</span>`;
