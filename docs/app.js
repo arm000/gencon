@@ -152,13 +152,21 @@ function findConflicts(ev, scheduledEvents) {
  * Filter ALL_EVENTS by search params.
  * @param {object} p  { query, type, day, system, minTickets, minDur, maxDur }
  */
+// Strip punctuation for fuzzy matching so "Dune Imperium" matches "Dune: Imperium"
+function normalizeText(s) {
+  return (s || '').toLowerCase().replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 function searchEvents(p = {}) {
   const { query = '', type = '', day = '', system = '', minTickets = 0, minDur = 0, maxDur = 0 } = p;
-  const q = query.trim().toLowerCase();
+  const words = normalizeText(query).split(' ').filter(Boolean);
 
   return ALL_EVENTS.filter(ev => {
-    // Full-text
-    if (q && !SEARCH_FIELDS.some(f => (ev[f] || '').toLowerCase().includes(q))) return false;
+    // Full-text: every query word must appear in at least one search field (punctuation-normalized)
+    if (words.length) {
+      const haystack = SEARCH_FIELDS.map(f => normalizeText(ev[f])).join(' ');
+      if (!words.every(w => haystack.includes(w))) return false;
+    }
     // Type
     if (type && !(ev.type || '').toLowerCase().includes(type.toLowerCase())) return false;
     // Day / Day+time: "Thu", "Thu-morning", "07/30", etc.
