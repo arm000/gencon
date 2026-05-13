@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GenCon 2026 – My Schedule</title>
 
-  <link rel="stylesheet" href="style.css?v=202605132050">
+  <script src="v.js"></script>
+  <script>document.write('<link rel="stylesheet" href="style.css?v='+V+'">');</script>
 
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
@@ -151,7 +152,7 @@
 <div id="toast"></div>
 <footer><span class="version-label"></span></footer>
 
-<script src="app.js?v=202605132050"></script>
+<script>document.write('<script src="app.js?v='+V+'"><\/script>');</script>
 <script>
 // ── Constants ─────────────────────────────────────────────────
 const SUGGEST_PER_GAP = 5;

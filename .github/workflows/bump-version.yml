@@ -29,9 +29,9 @@ jobs:
             2>/dev/null || echo 0)
 
           echo "{\"built\":\"$BUILT\",\"count\":$COUNT}" > docs/version.json
-          sed -i "s/?v=[0-9]*/?v=${BUILD}/g" docs/index.html docs/schedule.html
+          echo "var V='${BUILD}';" > docs/v.js
 
-          git add docs/version.json docs/index.html docs/schedule.html
+          git add docs/version.json docs/v.js
           git diff --cached --quiet \
             || git commit -m "chore: bump version to ${BUILD} [skip ci]"
           git push
