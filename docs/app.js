@@ -456,6 +456,18 @@ const AI_TOOLS = [
       required: ['game_id'],
     },
   },
+  {
+    name: 'get_alternatives',
+    description: 'Get all available timeslots for the same event (same title) as the given Game ID. ' +
+                 'Use this to find alternate times for a scheduled event, especially to resolve schedule conflicts.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        game_id: { type: 'string', description: 'Game ID of the event whose alternative timeslots you want' },
+      },
+      required: ['game_id'],
+    },
+  },
 ];
 
 function executeAiTool(name, input) {
@@ -513,6 +525,18 @@ function executeAiTool(name, input) {
     });
   }
 
+  if (name === 'get_alternatives') {
+    const alts = getAlternatives(input.game_id);
+    if (!alts.length) return `No alternative timeslots found for event ${input.game_id}.`;
+    return JSON.stringify(alts.map(a => ({
+      id:              a.id,
+      time:            fmtSlot(a),
+      tickets:         a.ticketsAvailable,
+      status:          a._status,        // "in-schedule" | "conflict" | "free"
+      conflicts_with:  a._conflicts.map(c => ({ id: c.id, title: c.title, time: fmtSlot(c) })),
+    })));
+  }
+
   return `Unknown tool: ${name}`;
 }
 
@@ -537,19 +561,47 @@ async function runAiSuggest(
       return;
     }
 
-    const scheduleDesc = scheduledEvents
-      .map(ev => `- ${ev.title} (${shortType(ev.type)}, ${fmtSlot(ev)})${ev.system ? `, ${ev.system}` : ''}`)
-      .join('\n');
+    // Detect conflicts upfront
+    const conflictPairs = [];
+    for (const ev of scheduledEvents) {
+      const cfls = findConflicts(ev, scheduledEvents.filter(e => e.id !== ev.id));
+      for (const c of cfls) {
+        // Only record each pair once (lower id first)
+        const key = [ev.id, c.id].sort().join('|');
+        if (!conflictPairs.find(p => p.key === key)) {
+          conflictPairs.push({ key, a: ev, b: c });
+        }
+      }
+    }
+
+    const scheduleDesc = scheduledEvents.map(ev => {
+      const cfls = findConflicts(ev, scheduledEvents.filter(e => e.id !== ev.id));
+      const conflictNote = cfls.length
+        ? ` ⚠ CONFLICTS with: ${cfls.map(c => `${c.title} (${fmtSlot(c)})`).join(', ')}`
+        : '';
+      return `- [${ev.id}] ${ev.title} (${shortType(ev.type)}, ${fmtSlot(ev)})${ev.system ? `, ${ev.system}` : ''}${conflictNote}`;
+    }).join('\n');
 
     const { day, timeOfDay } = parseDayFilter(rawDay);
     const TOD_DESC = { morning: 'before noon', afternoon: 'noon–6 PM', evening: '6 PM or later' };
     const dayDesc  = day ? day + (timeOfDay ? ` (${TOD_DESC[timeOfDay] || timeOfDay})` : '') : null;
 
+    const conflictSection = conflictPairs.length
+      ? `\n\n⚠ SCHEDULE CONFLICTS DETECTED (${conflictPairs.length}):\n` +
+        conflictPairs.map(p => `- [${p.a.id}] ${p.a.title} (${fmtSlot(p.a)}) overlaps [${p.b.id}] ${p.b.title} (${fmtSlot(p.b)})`).join('\n')
+      : '';
+
     systemPrompt =
-      `You are a GenCon event planning assistant. The user has these events in their schedule:\n\n${scheduleDesc}\n\n` +
-      `Based on their interests, use the search_events tool to find events they'd enjoy. ` +
+      `You are a GenCon event planning assistant. The user has these events in their schedule:\n\n${scheduleDesc}${conflictSection}\n\n` +
+      (conflictPairs.length
+        ? `PRIORITY: The schedule has conflicts listed above. Before suggesting new events, you MUST address each conflict. ` +
+          `For each conflicting pair, use get_alternatives to find other available timeslots for one or both events. ` +
+          `Recommend which event to move and to which alternate timeslot (must have tickets > 0 and no new conflicts). ` +
+          `Then, after resolving conflicts, `
+        : `Based on their interests, `) +
+      `use the search_events tool to find events they'd enjoy. ` +
       `Use get_event_details when you need more information about a specific event. ` +
-      `Suggest exactly ${count} events they don't already have scheduled` +
+      `Suggest exactly ${count} new events they don't already have scheduled` +
       (dayDesc    ? ` on ${dayDesc}`         : '') +
       (eventType  ? ` of type ${eventType}`  : '') +
       `. Only suggest events with tickets available (tickets > 0). ` +
@@ -558,8 +610,13 @@ async function runAiSuggest(
       (maxDur > 0 ? `Only suggest events no longer than ${maxDur}h. ` : '') +
       `For each suggestion include: Game ID, title, time, and a short reason why it fits their tastes.`;
 
+    const conflictPreamble = conflictPairs.length
+      ? `My schedule has ${conflictPairs.length} conflict${conflictPairs.length > 1 ? 's' : ''} — please resolve those first, then `
+      : `Please `;
+
     const userMsg =
-      `Please suggest ${count} events I'd enjoy based on my schedule` +
+      conflictPreamble +
+      `suggest ${count} events I'd enjoy based on my schedule` +
       (dayDesc    ? `, specifically on ${dayDesc}`           : '') +
       (eventType  ? `, preferably ${eventType} type events`  : '') +
       (minDur > 0 ? `, at least ${minDur}h long`            : '') +
@@ -608,6 +665,8 @@ async function runAiSuggest(
           if (block.type !== 'tool_use') continue;
           const label = block.name === 'search_events'
             ? `Searching: ${Object.entries(block.input).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ')}`
+            : block.name === 'get_alternatives'
+            ? `Finding alternate timeslots for: ${block.input.game_id}`
             : `Getting details: ${block.input.game_id}`;
           onProgress(label);
           const result = executeAiTool(block.name, block.input);
