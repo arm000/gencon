@@ -277,25 +277,57 @@ function eventsForGap(gapStart, gapEnd, dateKey, scheduledIds, filters = {}) {
     .sort((a, b) => (b._fillRatio - a._fillRatio) || (b.ticketsAvailable - a.ticketsAvailable));
 }
 
+// Morning/afternoon/evening hour boundaries
+const TIME_OF_DAY = {
+  morning:   [6,  12],
+  afternoon: [12, 18],
+  evening:   [18, 24],
+};
+
+/**
+ * Parse a day filter value that may include a time-of-day suffix.
+ * "Thu-morning" → { day: "Thu", timeOfDay: "morning" }
+ * "Fri"         → { day: "Fri", timeOfDay: null }
+ */
+function parseDayFilter(val) {
+  if (!val) return { day: null, timeOfDay: null };
+  const idx = val.indexOf('-');
+  if (idx === -1) return { day: val, timeOfDay: null };
+  return { day: val.slice(0, idx), timeOfDay: val.slice(idx + 1) };
+}
+
 /**
  * Collect suggestions for all relevant convention days.
  * @param {object} filters  Passed through to eventsForGap.
- * @param {string|null} dayFilter  Optional day label or date prefix to restrict.
+ * @param {string|null} dayFilter  Optional "Thu", "Fri-morning", etc.
  * @returns {Array<{ dateKey, dayLabel, gapStart, gapEnd, gapHours, events }>}
  */
 function getSuggestions(filters = {}, dayFilter = null) {
-  const ids           = getIds();
-  const scheduledEvs  = getScheduledEvents();
-  const results       = [];
+  const { day, timeOfDay } = parseDayFilter(dayFilter);
+  const ids          = getIds();
+  const scheduledEvs = getScheduledEvents();
+  const results      = [];
 
   for (const dateKey of CONV_DATES) {
-    if (dayFilter) {
+    if (day) {
       const label = DAYS_MAP[dateKey] || '';
-      if (!label.toLowerCase().startsWith(dayFilter.toLowerCase()) &&
-          !dateKey.startsWith(dayFilter)) continue;
+      if (!label.toLowerCase().startsWith(day.toLowerCase()) &&
+          !dateKey.startsWith(day)) continue;
     }
 
-    const gaps = getGapsForDay(dateKey, scheduledEvs);
+    let gaps = getGapsForDay(dateKey, scheduledEvs);
+
+    // Clip gaps to the selected time window
+    if (timeOfDay && TIME_OF_DAY[timeOfDay]) {
+      const [mo, dy] = dateKey.split('/').map(Number);
+      const [startH, endH] = TIME_OF_DAY[timeOfDay];
+      const winStart = new Date(2026, mo - 1, dy, startH, 0);
+      const winEnd   = new Date(2026, mo - 1, dy + (endH >= 24 ? 1 : 0), endH % 24, 0);
+      gaps = gaps
+        .map(([s, e]) => [new Date(Math.max(s, winStart)), new Date(Math.min(e, winEnd))])
+        .filter(([s, e]) => e > s);
+    }
+
     for (const [gapStart, gapEnd] of gaps) {
       const gapHours = (gapEnd - gapStart) / 3_600_000;
       if (gapHours < 0.5) continue;
@@ -469,7 +501,7 @@ function executeAiTool(name, input) {
  * @param {function()}       onDone      Called on completion
  * @param {function(Error)}  onError     Called on failure
  */
-async function runAiSuggest({ count, day, eventType }, onProgress, onText, onDone, onError) {
+async function runAiSuggest({ count, day: rawDay, eventType }, onProgress, onText, onDone, onError) {
   const scheduledEvents = getScheduledEvents();
   if (!scheduledEvents.length) {
     onError(new Error('No events scheduled yet — add some events first so I can learn your tastes.'));
@@ -480,20 +512,27 @@ async function runAiSuggest({ count, day, eventType }, onProgress, onText, onDon
     .map(ev => `- ${ev.title} (${shortType(ev.type)}, ${fmtSlot(ev)})${ev.system ? `, ${ev.system}` : ''}`)
     .join('\n');
 
+  const { day, timeOfDay } = parseDayFilter(rawDay);
+  const TOD_DESC = { morning: 'before noon', afternoon: 'noon–6 PM', evening: '6 PM or later' };
+  const dayDesc = day
+    ? day + (timeOfDay ? ` (${TOD_DESC[timeOfDay] || timeOfDay})` : '')
+    : null;
+
   const systemPrompt =
     `You are a GenCon event planning assistant. The user has these events in their schedule:\n\n${scheduleDesc}\n\n` +
     `Based on their interests, use the search_events tool to find events they'd enjoy. ` +
     `Use get_event_details when you need more information about a specific event. ` +
     `Suggest exactly ${count} events they don't already have scheduled` +
-    (day        ? ` on ${day}`             : '') +
+    (dayDesc    ? ` on ${dayDesc}`         : '') +
     (eventType  ? ` of type ${eventType}`  : '') +
     `. Only suggest events with tickets available (tickets > 0). ` +
+    (timeOfDay  ? `Only suggest events that START ${TOD_DESC[timeOfDay] || timeOfDay}. ` : '') +
     `For each suggestion include: Game ID, title, time, and a short reason why it fits their tastes.`;
 
   const userMsg =
     `Please suggest ${count} events I'd enjoy based on my schedule` +
-    (day        ? `, specifically on ${day}`               : '') +
-    (eventType  ? `, preferably ${eventType} type events`  : '') +
+    (dayDesc    ? `, specifically on ${dayDesc}`            : '') +
+    (eventType  ? `, preferably ${eventType} type events`   : '') +
     `.`;
 
   const messages = [{ role: 'user', content: userMsg }];
