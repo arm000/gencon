@@ -207,8 +207,14 @@ function renderPage() {
 }
 
 function makeRow(ev) {
-  const tr   = document.createElement('tr');
+  const tr      = document.createElement('tr');
   const inSched = isScheduled(ev.id);
+  const cfls    = inSched ? [] : findConflicts(ev, getScheduledEvents());
+  const hasConflict = cfls.length > 0;
+  if (hasConflict) tr.classList.add('row-conflict');
+  const conflictTip = hasConflict
+    ? cfls.map(c => `${c.title} (${fmtSlot(c)})`).join('; ')
+    : '';
   tr.innerHTML = `
     <td class="col-time">${fmtSlot(ev)}</td>
     <td class="col-title" data-id="${esc(ev.id)}">${esc(ev.title)}</td>
@@ -220,6 +226,7 @@ function makeRow(ev) {
       ${inSched
         ? `<button class="btn btn-success btn-sm" disabled>✓ Scheduled</button>`
         : `<button class="btn btn-primary btn-sm btn-add" data-id="${esc(ev.id)}">+ Add</button>`}
+      ${hasConflict ? `<span class="conflict-badge" title="${esc(conflictTip)}">⚠ conflict</span>` : ''}
       <button class="btn btn-secondary btn-sm btn-info" data-id="${esc(ev.id)}" title="Details">⋯</button>
     </td>`;
   return tr;
