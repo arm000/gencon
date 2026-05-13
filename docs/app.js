@@ -621,3 +621,122 @@ async function runAiSuggest(
     onError(err);
   }
 }
+
+// ── AI Alternate Schedules ────────────────────────────────────
+
+/**
+ * Ask Claude to suggest alternate schedule configurations by swapping events
+ * to different available timeslots with open tickets.
+ * @param {{ count }} opts
+ * @param {function(string)} onProgress
+ * @param {function(Array)}  onDone   receives array of schedule suggestions
+ * @param {function(Error)}  onError
+ */
+async function runAiAlternates({ count = 3 }, onProgress, onDone, onError) {
+  const scheduledEvents = getScheduledEvents();
+  if (!scheduledEvents.length) {
+    onError(new Error('No events scheduled yet.'));
+    return;
+  }
+
+  // Gather alternatives for each scheduled event (same title, different time, tickets available)
+  const evData = scheduledEvents.map(ev => ({
+    ev,
+    alts: getAlternatives(ev.id).filter(a => !a._inSchedule && a.ticketsAvailable > 0),
+  }));
+
+  if (!evData.some(d => d.alts.length > 0)) {
+    onError(new Error('None of your scheduled events have alternative time slots available with open tickets.'));
+    return;
+  }
+
+  const schedDesc = evData.map(({ ev, alts }) => {
+    let s = `• "${ev.title}" — ${fmtSlot(ev)} [ID: ${ev.id}]`;
+    if (alts.length) {
+      s += '\n  Available alternatives:';
+      for (const a of alts) {
+        s += `\n    - ${fmtSlot(a)} [ID: ${a.id}, ${a.ticketsAvailable} ticket${a.ticketsAvailable === 1 ? '' : 's'}]`;
+      }
+    } else {
+      s += '\n  (no alternatives available)';
+    }
+    return s;
+  }).join('\n\n');
+
+  onProgress('Analyzing schedule alternatives…');
+
+  try {
+    const resp = await fetch(AI_WORKER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-opus-4-6',
+        max_tokens: 4096,
+        system:
+          'You are a GenCon scheduling assistant. Analyze the schedule and suggest improved ' +
+          'alternate configurations by swapping events to different available time slots. ' +
+          'Focus on reducing conflicts, improving day flow, and giving the user variety.',
+        tool_choice: { type: 'tool', name: 'submit_schedules' },
+        tools: [{
+          name: 'submit_schedules',
+          description: 'Submit the suggested alternate schedule configurations',
+          input_schema: {
+            type: 'object',
+            required: ['schedules'],
+            properties: {
+              schedules: {
+                type: 'array',
+                description: `Array of ${count} distinct alternate schedule suggestions`,
+                items: {
+                  type: 'object',
+                  required: ['description', 'changes'],
+                  properties: {
+                    description: {
+                      type: 'string',
+                      description: 'Brief description of this variation and why it improves the schedule',
+                    },
+                    changes: {
+                      type: 'array',
+                      description: 'Events being swapped to a different time (only list events that change)',
+                      items: {
+                        type: 'object',
+                        required: ['original_id', 'replacement_id', 'reason'],
+                        properties: {
+                          original_id:    { type: 'string', description: 'Game ID currently in schedule' },
+                          replacement_id: { type: 'string', description: 'Game ID of the replacement timeslot' },
+                          reason:         { type: 'string', description: 'Why this swap improves the schedule' },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        }],
+        messages: [{
+          role: 'user',
+          content:
+            `Here is my current GenCon schedule with available alternatives:\n\n${schedDesc}\n\n` +
+            `Please suggest ${count} distinct alternate schedule configurations. ` +
+            `For each, swap one or more events to different available timeslots to improve flow or reduce conflicts. ` +
+            `Only use Game IDs listed above. Make each suggestion meaningfully different from the others.`,
+        }],
+      }),
+    });
+
+    if (!resp.ok) {
+      const txt = await resp.text();
+      throw new Error(`Worker error ${resp.status}: ${txt}`);
+    }
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+
+    const toolUse = data.content.find(b => b.type === 'tool_use' && b.name === 'submit_schedules');
+    if (!toolUse) throw new Error('No structured response received from AI');
+
+    onDone(toolUse.input.schedules || []);
+  } catch (err) {
+    onError(err);
+  }
+}

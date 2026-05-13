@@ -595,3 +595,65 @@ footer {
   font-size: .82rem;
   word-wrap: break-word;
 }
+
+/* ── Alternate Schedules ── */
+.alts-schedule-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: .7rem;
+  margin-top: .6rem;
+}
+.alts-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: .35rem;
+}
+.alts-description {
+  margin: 0 0 .5rem;
+  font-size: .85rem;
+  color: var(--muted-text);
+}
+.alts-changes {
+  display: flex;
+  flex-direction: column;
+  gap: .4rem;
+}
+.alts-change-row {
+  font-size: .82rem;
+  padding: .3rem .4rem;
+  background: var(--bg-alt);
+  border-radius: var(--radius);
+}
+.alts-change-from,
+.alts-change-to {
+  display: flex;
+  align-items: baseline;
+  gap: .35rem;
+  flex-wrap: wrap;
+}
+.alts-change-to {
+  margin-top: .15rem;
+}
+.alts-arrow {
+  width: 1rem;
+  text-align: center;
+  color: var(--muted-text);
+  flex-shrink: 0;
+}
+.alts-change-label {
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.alts-time {
+  color: var(--muted-text);
+  font-size: .78rem;
+  white-space: nowrap;
+}
+.alts-reason {
+  margin-top: .2rem;
+  padding-left: 1.35rem;
+  font-style: italic;
+  color: var(--muted-text);
+  font-size: .78rem;
+}

@@ -84,6 +84,24 @@
         <div id="ai-output" class="ai-output" style="display:none"></div>
       </div>
 
+      <!-- Alternate Schedules -->
+      <div class="card" id="alts-card">
+        <h2>Alternate Schedules</h2>
+        <p style="margin:0 0 .6rem;font-size:.85rem;color:var(--muted-text)">
+          AI suggests rearrangements of your existing events using available alternative timeslots.
+        </p>
+
+        <div class="suggest-filters">
+          <label>Variations
+            <input type="number" id="alts-count" value="3" min="1" max="6" style="width:52px">
+          </label>
+        </div>
+
+        <button class="btn btn-primary" id="alts-go">Generate</button>
+
+        <div id="alts-output" class="ai-output" style="display:none"></div>
+      </div>
+
       <div class="card">
         <h2>Suggestions for gaps</h2>
 
@@ -190,6 +208,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderSuggestions();
   bindEvents();
   initAiPanel();
+  initAlternatesPanel();
 });
 
 // ── Schedule rendering ────────────────────────────────────────
@@ -489,6 +508,99 @@ function monthName(m) {
 
 function esc(str) {
   return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Alternate Schedules Panel ─────────────────────────────────
+function initAlternatesPanel() {
+  const goBtn  = document.getElementById('alts-go');
+  const output = document.getElementById('alts-output');
+
+  // Delegate clicks on event cards inside alt schedule cards
+  output.addEventListener('click', e => {
+    const applyBtn = e.target.closest('.btn-alts-apply');
+    const titleEl  = e.target.closest('.sug-title');
+    if (titleEl) openDetail(titleEl.dataset.id);
+    if (applyBtn) {
+      const card = applyBtn.closest('.alts-schedule-card');
+      if (!card) return;
+      const changes = JSON.parse(card.dataset.changes || '[]');
+      for (const { original_id, replacement_id } of changes) {
+        removeEvent(original_id);
+      }
+      for (const { original_id, replacement_id } of changes) {
+        handleAdd(replacement_id, true);
+      }
+      renderSchedule();
+      renderSuggestions();
+      // Mark as applied
+      applyBtn.textContent = 'Applied!';
+      applyBtn.disabled = true;
+      applyBtn.classList.replace('btn-primary', 'btn-secondary');
+    }
+  });
+
+  function renderScheduleSuggestions(schedules) {
+    if (!schedules.length) {
+      return `<p class="no-schedule-msg">No alternate schedules could be generated for your current events.</p>`;
+    }
+    let html = '';
+    for (let i = 0; i < schedules.length; i++) {
+      const s = schedules[i];
+      const changesJson = esc(JSON.stringify(s.changes || []));
+      html += `<div class="alts-schedule-card" data-changes="${changesJson}">
+        <div class="alts-card-header">
+          <strong>Option ${i + 1}</strong>
+          <button class="btn btn-primary btn-sm btn-alts-apply">Apply</button>
+        </div>
+        <p class="alts-description">${esc(s.description)}</p>
+        <div class="alts-changes">`;
+      for (const ch of (s.changes || [])) {
+        const orig = EVENT_INDEX[ch.original_id];
+        const repl = EVENT_INDEX[ch.replacement_id];
+        if (!orig || !repl) continue;
+        html += `<div class="alts-change-row">
+          <div class="alts-change-from">
+            <span class="alts-arrow">↕</span>
+            <span class="alts-change-label">Swap:</span>
+            <span class="sug-title" data-id="${esc(orig.id)}">${esc(orig.title)}</span>
+            <span class="alts-time">${esc(fmtSlot(orig))}</span>
+          </div>
+          <div class="alts-change-to">
+            <span class="alts-arrow"> </span>
+            <span class="alts-change-label">→</span>
+            <span class="sug-title" data-id="${esc(repl.id)}">${esc(repl.title)}</span>
+            <span class="alts-time">${esc(fmtSlot(repl))}</span>
+            <span class="sug-avail">${fmtAvail(repl.ticketsAvailable)}</span>
+          </div>
+          <div class="alts-reason">${esc(ch.reason)}</div>
+        </div>`;
+      }
+      html += `</div></div>`;
+    }
+    return html;
+  }
+
+  goBtn.addEventListener('click', () => {
+    const count = parseInt(document.getElementById('alts-count').value, 10) || 3;
+
+    output.style.display = '';
+    output.innerHTML = '<span class="ai-progress-line">Analyzing schedule alternatives…</span>';
+    goBtn.disabled = true;
+
+    runAiAlternates(
+      { count },
+      msg  => { output.innerHTML = `<span class="ai-progress-line">${esc(msg)}</span>`; },
+      schedules => {
+        goBtn.disabled = false;
+        output.innerHTML = renderScheduleSuggestions(schedules);
+        output.scrollTop = 0;
+      },
+      err  => {
+        goBtn.disabled = false;
+        output.innerHTML = `<span style="color:var(--danger-text)">${esc(err.message)}</span>`;
+      },
+    );
+  });
 }
 
 // ── AI Panel ──────────────────────────────────────────────────
