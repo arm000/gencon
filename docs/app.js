@@ -404,6 +404,20 @@ function shortType(type) {
 
 const AI_WORKER_URL = 'https://gencon-ai-proxy.armartin.workers.dev';
 
+/** Extract GenCon event IDs from a text string, returning only those present in EVENT_INDEX. */
+function extractEventIds(text) {
+  const found = [];
+  const seen  = new Set();
+  const tokens = text.match(/\b[A-Z]{2,6}26[A-Z0-9]{2,}\b/g) || [];
+  for (const token of tokens) {
+    if (EVENT_INDEX[token] && !seen.has(token)) {
+      found.push(token);
+      seen.add(token);
+    }
+  }
+  return found;
+}
+
 const AI_TOOLS = [
   {
     name: 'search_events',

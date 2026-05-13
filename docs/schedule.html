@@ -486,8 +486,16 @@ function initAiPanel() {
   const goBtn  = document.getElementById('ai-go');
   const output = document.getElementById('ai-output');
 
+  // Delegate clicks on AI-rendered event cards
+  output.addEventListener('click', e => {
+    const addBtn  = e.target.closest('.btn-ai-add');
+    const titleEl = e.target.closest('.sug-title');
+    if (addBtn)  handleAdd(addBtn.dataset.id);
+    if (titleEl) openDetail(titleEl.dataset.id);
+  });
+
   goBtn.addEventListener('click', () => {
-    const count     = parseInt(document.getElementById('ai-count').value, 10) || 5;
+    const count     = parseInt(document.getElementById('ai-count').value, 10) || 4;
     const day       = document.getElementById('ai-day').value;
     const eventType = document.getElementById('ai-type').value.trim();
 
@@ -511,7 +519,32 @@ function initAiPanel() {
       // onDone
       () => {
         goBtn.disabled = false;
-        output.innerHTML = `<div class="ai-result">${marked.parse(textAccum)}</div>`;
+
+        // Render markdown text
+        let html = `<div class="ai-result">${marked.parse(textAccum)}</div>`;
+
+        // Render interactive event cards for any IDs Claude mentioned
+        const ids = extractEventIds(textAccum);
+        if (ids.length) {
+          html += '<div class="ai-event-list">';
+          for (const id of ids) {
+            const ev = EVENT_INDEX[id];
+            if (!ev) continue;
+            const s = parseTime(ev.start), e = parseTime(ev.end);
+            const slot = s && e ? `${fmtTime(s)}–${fmtTime(e)}` : '';
+            html += `<div class="suggest-event">
+              <span class="sug-time">${esc(slot)}</span>
+              <span class="sug-title" data-id="${esc(ev.id)}">${esc(ev.title)}</span>
+              <span class="sug-avail">${fmtAvail(ev.ticketsAvailable)}</span>
+              <span class="sug-add">
+                <button class="btn btn-primary btn-sm btn-ai-add" data-id="${esc(ev.id)}">+ Add</button>
+              </span>
+            </div>`;
+          }
+          html += '</div>';
+        }
+
+        output.innerHTML = html;
         output.scrollTop = 0;
       },
       // onError
