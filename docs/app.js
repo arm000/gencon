@@ -351,3 +351,193 @@ function fmtCost(n) {
 function shortType(type) {
   return (type || '').split(' - ')[0] || '';
 }
+
+// ── AI Suggest ────────────────────────────────────────────────
+
+const AI_WORKER_KEY = 'gencon-ai-worker';
+
+function getWorkerUrl() {
+  return localStorage.getItem(AI_WORKER_KEY) || '';
+}
+function setWorkerUrl(url) {
+  localStorage.setItem(AI_WORKER_KEY, url.trim().replace(/\/$/, ''));
+}
+
+const AI_TOOLS = [
+  {
+    name: 'search_events',
+    description: 'Search the GenCon event catalog. Returns up to `limit` matching events (default 20).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query:       { type: 'string',  description: 'Full-text search across title, description, game system, GM names' },
+        event_type:  { type: 'string',  description: 'Filter by type prefix, e.g. "RPG", "BGM", "SEM", "TCG"' },
+        day:         { type: 'string',  description: 'Filter by convention day: "Thu", "Fri", "Sat", "Sun", or "Mon"' },
+        system:      { type: 'string',  description: 'Filter by game system substring, e.g. "D&D", "Pathfinder"' },
+        min_tickets: { type: 'integer', description: 'Minimum tickets available (use 1 to exclude sold-out events)' },
+        min_dur:     { type: 'number',  description: 'Minimum event duration in hours' },
+        max_dur:     { type: 'number',  description: 'Maximum event duration in hours' },
+        limit:       { type: 'integer', description: 'Max results to return (default 20, max 50)' },
+      },
+    },
+  },
+  {
+    name: 'get_event_details',
+    description: 'Get full details for a specific event by its Game ID.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        game_id: { type: 'string', description: 'The event Game ID, e.g. "RPG26ND300797"' },
+      },
+      required: ['game_id'],
+    },
+  },
+];
+
+function executeAiTool(name, input) {
+  if (name === 'search_events') {
+    const limit = Math.min(input.limit || 20, 50);
+    const results = searchEvents({
+      query:      input.query       || '',
+      type:       input.event_type  || '',
+      day:        input.day         || '',
+      system:     input.system      || '',
+      minTickets: input.min_tickets || 0,
+      minDur:     input.min_dur     || 0,
+      maxDur:     input.max_dur     || 0,
+    }).slice(0, limit);
+
+    if (!results.length) return 'No events found matching those criteria.';
+
+    const scheduledIds = getIds();
+    return JSON.stringify(results.map(ev => ({
+      id:        ev.id,
+      title:     ev.title,
+      type:      ev.type,
+      system:    ev.system,
+      time:      fmtSlot(ev),
+      duration:  ev.duration,
+      cost:      ev.cost,
+      tickets:   ev.ticketsAvailable,
+      shortDesc: ev.shortDesc,
+      scheduled: scheduledIds.includes(ev.id),
+    })));
+  }
+
+  if (name === 'get_event_details') {
+    const ev = EVENT_INDEX[input.game_id];
+    if (!ev) return `Event ${input.game_id} not found.`;
+    const scheduledIds = getIds();
+    return JSON.stringify({
+      id:          ev.id,
+      title:       ev.title,
+      type:        ev.type,
+      system:      ev.system,
+      time:        fmtSlot(ev),
+      duration:    ev.duration,
+      cost:        ev.cost,
+      tickets:     ev.ticketsAvailable,
+      gmNames:     ev.gmNames,
+      location:    [ev.location, ev.roomName].filter(Boolean).join(' '),
+      shortDesc:   ev.shortDesc,
+      longDesc:    ev.longDesc,
+      minPlayers:  ev.minPlayers,
+      maxPlayers:  ev.maxPlayers,
+      ageRequired: ev.ageRequired,
+      experience:  ev.experienceRequired,
+      scheduled:   scheduledIds.includes(ev.id),
+    });
+  }
+
+  return `Unknown tool: ${name}`;
+}
+
+/**
+ * Run the AI suggest agentic loop.
+ * @param {{ count, day, eventType, workerUrl }} opts
+ * @param {function(string)} onProgress  Progress message during tool calls
+ * @param {function(string)} onText      Text chunks from Claude's final response
+ * @param {function()}       onDone      Called on completion
+ * @param {function(Error)}  onError     Called on failure
+ */
+async function runAiSuggest({ count, day, eventType, workerUrl }, onProgress, onText, onDone, onError) {
+  const scheduledEvents = getScheduledEvents();
+  if (!scheduledEvents.length) {
+    onError(new Error('No events scheduled yet — add some events first so I can learn your tastes.'));
+    return;
+  }
+
+  const scheduleDesc = scheduledEvents
+    .map(ev => `- ${ev.title} (${shortType(ev.type)}, ${fmtSlot(ev)})${ev.system ? `, ${ev.system}` : ''}`)
+    .join('\n');
+
+  const systemPrompt =
+    `You are a GenCon event planning assistant. The user has these events in their schedule:\n\n${scheduleDesc}\n\n` +
+    `Based on their interests, use the search_events tool to find events they'd enjoy. ` +
+    `Use get_event_details when you need more information about a specific event. ` +
+    `Suggest exactly ${count} events they don't already have scheduled` +
+    (day        ? ` on ${day}`             : '') +
+    (eventType  ? ` of type ${eventType}`  : '') +
+    `. Only suggest events with tickets available (tickets > 0). ` +
+    `For each suggestion include: Game ID, title, time, and a short reason why it fits their tastes.`;
+
+  const userMsg =
+    `Please suggest ${count} events I'd enjoy based on my schedule` +
+    (day        ? `, specifically on ${day}`               : '') +
+    (eventType  ? `, preferably ${eventType} type events`  : '') +
+    `.`;
+
+  const messages = [{ role: 'user', content: userMsg }];
+
+  try {
+    for (let i = 0; i < 12; i++) {
+      const response = await fetch(workerUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model:    'claude-opus-4-6',
+          max_tokens: 4096,
+          system:   systemPrompt,
+          tools:    AI_TOOLS,
+          thinking: { type: 'adaptive' },
+          messages,
+        }),
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Worker error ${response.status}: ${text}`);
+      }
+
+      const data = await response.json();
+      if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+
+      messages.push({ role: 'assistant', content: data.content });
+
+      if (data.stop_reason === 'end_turn') {
+        for (const block of data.content) {
+          if (block.type === 'text') onText(block.text);
+        }
+        onDone();
+        return;
+      }
+
+      if (data.stop_reason === 'tool_use') {
+        const toolResults = [];
+        for (const block of data.content) {
+          if (block.type !== 'tool_use') continue;
+          const label = block.name === 'search_events'
+            ? `Searching: ${Object.entries(block.input).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ')}`
+            : `Getting details: ${block.input.game_id}`;
+          onProgress(label);
+          const result = executeAiTool(block.name, block.input);
+          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: result });
+        }
+        messages.push({ role: 'user', content: toolResults });
+      }
+    }
+    onError(new Error('Stopped after too many tool-call iterations'));
+  } catch (err) {
+    onError(err);
+  }
+}

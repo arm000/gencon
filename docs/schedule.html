@@ -40,8 +40,43 @@
       </div>
     </div>
 
-    <!-- Right: suggest panel -->
+    <!-- Right: suggest panel + AI panel -->
     <div class="suggest-panel">
+
+      <!-- AI Suggestions -->
+      <div class="card" id="ai-card">
+        <h2>AI Suggestions</h2>
+
+        <div class="ai-settings-row">
+          <label for="ai-worker-url" style="white-space:nowrap;font-weight:600">Worker URL</label>
+          <input type="url" id="ai-worker-url" placeholder="https://gencon-ai.yourname.workers.dev" autocomplete="off">
+          <button class="btn btn-secondary btn-sm" id="ai-save-url">Save</button>
+        </div>
+
+        <div class="suggest-filters">
+          <label>Count
+            <input type="number" id="ai-count" value="5" min="1" max="15" style="width:52px">
+          </label>
+          <label>Day
+            <select id="ai-day">
+              <option value="">Any day</option>
+              <option value="Thu">Thu (Jul 30)</option>
+              <option value="Fri">Fri (Jul 31)</option>
+              <option value="Sat">Sat (Aug 1)</option>
+              <option value="Sun">Sun (Aug 2)</option>
+              <option value="Mon">Mon (Aug 3)</option>
+            </select>
+          </label>
+          <label>Prefer type
+            <input type="text" id="ai-type" placeholder="e.g. RPG" style="width:72px">
+          </label>
+        </div>
+
+        <button class="btn btn-primary" id="ai-go">Ask AI</button>
+
+        <div id="ai-output" class="ai-output" style="display:none"></div>
+      </div>
+
       <div class="card">
         <h2>Suggestions for gaps</h2>
 
@@ -77,7 +112,8 @@
         </div>
         <div id="suggest-body"></div>
       </div>
-    </div>
+
+    </div><!-- /.suggest-panel -->
 
   </div><!-- /.schedule-layout -->
 </main>
@@ -145,6 +181,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderSchedule();
   renderSuggestions();
   bindEvents();
+  initAiPanel();
 });
 
 // ── Schedule rendering ────────────────────────────────────────
@@ -442,6 +479,65 @@ function monthName(m) {
 
 function esc(str) {
   return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── AI Panel ──────────────────────────────────────────────────
+function initAiPanel() {
+  const urlInput = document.getElementById('ai-worker-url');
+  const saveBtn  = document.getElementById('ai-save-url');
+  const goBtn    = document.getElementById('ai-go');
+  const output   = document.getElementById('ai-output');
+
+  // Restore saved URL
+  urlInput.value = getWorkerUrl();
+
+  saveBtn.addEventListener('click', () => {
+    setWorkerUrl(urlInput.value);
+    showToast('Worker URL saved');
+  });
+
+  goBtn.addEventListener('click', () => {
+    const workerUrl = getWorkerUrl() || urlInput.value.trim().replace(/\/$/, '');
+    if (!workerUrl) {
+      showToast('Enter and save your Worker URL first', 'warn');
+      urlInput.focus();
+      return;
+    }
+
+    const count     = parseInt(document.getElementById('ai-count').value, 10) || 5;
+    const day       = document.getElementById('ai-day').value;
+    const eventType = document.getElementById('ai-type').value.trim();
+
+    output.style.display = '';
+    output.innerHTML = '<span class="ai-progress-line">Asking Claude…</span>';
+    goBtn.disabled = true;
+
+    let textAccum = '';
+
+    runAiSuggest(
+      { count, day, eventType, workerUrl },
+      // onProgress — tool call status
+      msg => {
+        output.innerHTML += `\n<span class="ai-progress-line">${esc(msg)}</span>`;
+        output.scrollTop = output.scrollHeight;
+      },
+      // onText — Claude's final response text
+      chunk => {
+        textAccum += chunk;
+      },
+      // onDone
+      () => {
+        goBtn.disabled = false;
+        output.innerHTML = `<div class="ai-result">${esc(textAccum)}</div>`;
+        output.scrollTop = 0;
+      },
+      // onError
+      err => {
+        goBtn.disabled = false;
+        output.innerHTML = `<span style="color:var(--danger-text)">${esc(err.message)}</span>`;
+      },
+    );
+  });
 }
 </script>
 </body>

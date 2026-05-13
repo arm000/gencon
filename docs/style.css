@@ -517,3 +517,37 @@ table.event-table .col-action { white-space: nowrap; text-align: right; }
   table.event-table .col-system,
   table.event-table .col-location { display: none; }
 }
+
+/* ── AI Suggest panel ────────────────────────────────────── */
+.ai-settings-row {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  margin-bottom: .75rem;
+  font-size: .8rem;
+}
+.ai-settings-row input[type="url"] {
+  flex: 1;
+  min-width: 0;
+}
+.ai-output {
+  margin-top: .75rem;
+  padding: .6rem .75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: .82rem;
+  line-height: 1.65;
+  max-height: 420px;
+  overflow-y: auto;
+}
+.ai-progress-line {
+  display: block;
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: .78rem;
+}
+.ai-result {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
