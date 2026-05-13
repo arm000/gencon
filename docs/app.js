@@ -370,14 +370,7 @@ function shortType(type) {
 
 // ── AI Suggest ────────────────────────────────────────────────
 
-const AI_WORKER_KEY = 'gencon-ai-worker';
-
-function getWorkerUrl() {
-  return localStorage.getItem(AI_WORKER_KEY) || '';
-}
-function setWorkerUrl(url) {
-  localStorage.setItem(AI_WORKER_KEY, url.trim().replace(/\/$/, ''));
-}
+const AI_WORKER_URL = 'https://gencon-ai-proxy.armartin.workers.dev';
 
 const AI_TOOLS = [
   {
@@ -476,7 +469,7 @@ function executeAiTool(name, input) {
  * @param {function()}       onDone      Called on completion
  * @param {function(Error)}  onError     Called on failure
  */
-async function runAiSuggest({ count, day, eventType, workerUrl }, onProgress, onText, onDone, onError) {
+async function runAiSuggest({ count, day, eventType }, onProgress, onText, onDone, onError) {
   const scheduledEvents = getScheduledEvents();
   if (!scheduledEvents.length) {
     onError(new Error('No events scheduled yet — add some events first so I can learn your tastes.'));
@@ -507,7 +500,7 @@ async function runAiSuggest({ count, day, eventType, workerUrl }, onProgress, on
 
   try {
     for (let i = 0; i < 12; i++) {
-      const response = await fetch(workerUrl, {
+      const response = await fetch(AI_WORKER_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

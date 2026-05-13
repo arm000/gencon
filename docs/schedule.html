@@ -47,12 +47,6 @@
       <div class="card" id="ai-card">
         <h2>AI Suggestions</h2>
 
-        <div class="ai-settings-row">
-          <label for="ai-worker-url" style="white-space:nowrap;font-weight:600">Worker URL</label>
-          <input type="url" id="ai-worker-url" placeholder="https://gencon-ai.yourname.workers.dev" autocomplete="off">
-          <button class="btn btn-secondary btn-sm" id="ai-save-url">Save</button>
-        </div>
-
         <div class="suggest-filters">
           <label>Count
             <input type="number" id="ai-count" value="5" min="1" max="15" style="width:52px">
@@ -484,27 +478,10 @@ function esc(str) {
 
 // ── AI Panel ──────────────────────────────────────────────────
 function initAiPanel() {
-  const urlInput = document.getElementById('ai-worker-url');
-  const saveBtn  = document.getElementById('ai-save-url');
-  const goBtn    = document.getElementById('ai-go');
-  const output   = document.getElementById('ai-output');
-
-  // Restore saved URL
-  urlInput.value = getWorkerUrl();
-
-  saveBtn.addEventListener('click', () => {
-    setWorkerUrl(urlInput.value);
-    showToast('Worker URL saved');
-  });
+  const goBtn  = document.getElementById('ai-go');
+  const output = document.getElementById('ai-output');
 
   goBtn.addEventListener('click', () => {
-    const workerUrl = getWorkerUrl() || urlInput.value.trim().replace(/\/$/, '');
-    if (!workerUrl) {
-      showToast('Enter and save your Worker URL first', 'warn');
-      urlInput.focus();
-      return;
-    }
-
     const count     = parseInt(document.getElementById('ai-count').value, 10) || 5;
     const day       = document.getElementById('ai-day').value;
     const eventType = document.getElementById('ai-type').value.trim();
@@ -516,7 +493,7 @@ function initAiPanel() {
     let textAccum = '';
 
     runAiSuggest(
-      { count, day, eventType, workerUrl },
+      { count, day, eventType },
       // onProgress — tool call status
       msg => {
         output.innerHTML += `\n<span class="ai-progress-line">${esc(msg)}</span>`;
