@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Download GenCon events and convert to docs/events.json for the static website."""
 
+import csv
 import io
 import json
 import os
@@ -10,9 +11,10 @@ from datetime import datetime, timezone
 import requests
 import openpyxl
 
-EVENTS_URL = "https://www.gencon.com/downloads/events.zip"
+EVENTS_URL   = "https://www.gencon.com/downloads/events.zip"
 OUT_PATH     = os.path.join(os.path.dirname(__file__), "..", "docs", "events.json")
 VERSION_PATH = os.path.join(os.path.dirname(__file__), "..", "docs", "version.json")
+CSV_PATH     = os.path.join(os.path.dirname(__file__), "..", "events.csv")
 
 # CSV column → JSON field name. Columns not listed here are dropped.
 FIELD_MAP = [
@@ -85,14 +87,22 @@ def main() -> None:
             for row in all_rows[1:]:
                 raw_rows.append(dict(zip(headers, [str(v) if v is not None else "" for v in row])))
         elif csv_:
-            import csv, io as _io
             print(f"Extracting {csv_[0]} ...")
             text = zf.read(csv_[0]).decode("utf-8-sig")
-            reader = csv.DictReader(_io.StringIO(text))
+            reader = csv.DictReader(io.StringIO(text))
             raw_rows = list(reader)
         else:
             print(f"ERROR: No CSV or XLSX found in ZIP. Contents: {names}")
             raise SystemExit(1)
+
+    # Write events.csv for the CLI (gencon.py)
+    if raw_rows:
+        csv_path = os.path.abspath(CSV_PATH)
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=list(raw_rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(raw_rows)
+        print(f"Wrote {len(raw_rows):,} rows to {csv_path}")
 
     print(f"Converting {len(raw_rows):,} rows ...")
 
