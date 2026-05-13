@@ -28,7 +28,9 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/events.json docs/version.json
+          BUILD=$(date +%Y%m%d%H%M)
+          sed -i "s/?v=[0-9]*/?v=${BUILD}/g" docs/index.html docs/schedule.html
+          git add docs/events.json docs/version.json docs/index.html docs/schedule.html
           git diff --cached --quiet \
             || git commit -m "chore: refresh events data [skip ci]"
           git push
