@@ -4,7 +4,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GenCon 2026 – My Schedule</title>
+
   <link rel="stylesheet" href="style.css?v=202605132044">
+
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
 </head>
 <body>
 
@@ -506,7 +510,7 @@ function initAiPanel() {
       // onDone
       () => {
         goBtn.disabled = false;
-        output.innerHTML = `<div class="ai-result">${esc(textAccum)}</div>`;
+        output.innerHTML = `<div class="ai-result">${marked.parse(textAccum)}</div>`;
         output.scrollTop = 0;
       },
       // onError

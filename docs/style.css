@@ -559,3 +559,18 @@ footer {
   font-size: .75rem;
   color: var(--text-muted);
 }
+
+.ai-result h1, .ai-result h2, .ai-result h3 {
+  font-size: .95rem;
+  margin: .75rem 0 .25rem;
+}
+.ai-result p  { margin: .4rem 0; }
+.ai-result ul, .ai-result ol { margin: .4rem 0; padding-left: 1.4rem; }
+.ai-result li { margin: .2rem 0; }
+.ai-result strong { font-weight: 600; }
+.ai-result code {
+  background: var(--border);
+  padding: .1em .3em;
+  border-radius: 3px;
+  font-size: .85em;
+}
