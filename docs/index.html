@@ -32,14 +32,14 @@
           <option value="">All types</option>
         </select>
       </label>
-      <label>Day
+      <label>Day/Time
         <select id="f-day">
           <option value="">Any day</option>
-          <option value="Thu">Thursday (Jul 30)</option>
-          <option value="Fri">Friday (Jul 31)</option>
-          <option value="Sat">Saturday (Aug 1)</option>
-          <option value="Sun">Sunday (Aug 2)</option>
-          <option value="Mon">Monday (Aug 3)</option>
+          <optgroup label="Thu, Jul 30"><option value="Thu">All day</option><option value="Thu-morning">Morning (before noon)</option><option value="Thu-afternoon">Afternoon (noon–6 PM)</option><option value="Thu-evening">Evening (6 PM+)</option></optgroup>
+          <optgroup label="Fri, Jul 31"><option value="Fri">All day</option><option value="Fri-morning">Morning</option><option value="Fri-afternoon">Afternoon</option><option value="Fri-evening">Evening</option></optgroup>
+          <optgroup label="Sat, Aug 1"><option value="Sat">All day</option><option value="Sat-morning">Morning</option><option value="Sat-afternoon">Afternoon</option><option value="Sat-evening">Evening</option></optgroup>
+          <optgroup label="Sun, Aug 2"><option value="Sun">All day</option><option value="Sun-morning">Morning</option><option value="Sun-afternoon">Afternoon</option><option value="Sun-evening">Evening</option></optgroup>
+          <optgroup label="Mon, Aug 3"><option value="Mon">All day</option><option value="Mon-morning">Morning</option><option value="Mon-afternoon">Afternoon</option><option value="Mon-evening">Evening</option></optgroup>
         </select>
       </label>
       <label>Duration (h)

@@ -161,12 +161,21 @@ function searchEvents(p = {}) {
     if (q && !SEARCH_FIELDS.some(f => (ev[f] || '').toLowerCase().includes(q))) return false;
     // Type
     if (type && !(ev.type || '').toLowerCase().includes(type.toLowerCase())) return false;
-    // Day: match against "Thu" or date prefix "07/30"
+    // Day / Day+time: "Thu", "Thu-morning", "07/30", etc.
     if (day) {
+      const { day: dayPart, timeOfDay } = parseDayFilter(day);
       const prefix   = (ev.start || '').slice(0, 5);
       const dayLabel = DAYS_MAP[prefix] || '';
-      if (!dayLabel.toLowerCase().startsWith(day.toLowerCase()) &&
-          !prefix.startsWith(day)) return false;
+      if (!dayLabel.toLowerCase().startsWith(dayPart.toLowerCase()) &&
+          !prefix.startsWith(dayPart)) return false;
+      if (timeOfDay && TIME_OF_DAY[timeOfDay]) {
+        const startDate = parseTime(ev.start);
+        if (startDate) {
+          const h = startDate.getHours();
+          const [startH, endH] = TIME_OF_DAY[timeOfDay];
+          if (h < startH || h >= endH) return false;
+        }
+      }
     }
     // System
     if (system && !(ev.system || '').toLowerCase().includes(system.toLowerCase())) return false;
