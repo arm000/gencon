@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GenCon 2026 – Search Events</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <a class="logo" href="index.html">GenCon 2026</a>
+  <nav>
+    <a href="index.html" class="active">Search</a>
+    <a href="schedule.html">My Schedule</a>
+  </nav>
+  <span class="header-right" id="header-count"></span>
+</header>
+
+<main>
+  <div class="card">
+    <!-- Search bar -->
+    <div class="search-bar">
+      <input type="text" id="q" placeholder="Search events…" autocomplete="off">
+    </div>
+
+    <!-- Filters -->
+    <div class="filters">
+      <label>Type
+        <select id="f-type">
+          <option value="">All types</option>
+        </select>
+      </label>
+      <label>Day
+        <select id="f-day">
+          <option value="">Any day</option>
+          <option value="Thu">Thursday (Jul 30)</option>
+          <option value="Fri">Friday (Jul 31)</option>
+          <option value="Sat">Saturday (Aug 1)</option>
+          <option value="Sun">Sunday (Aug 2)</option>
+          <option value="Mon">Monday (Aug 3)</option>
+        </select>
+      </label>
+      <label>Duration (h)
+        <div class="filter-group">
+          <input type="number" id="f-min-dur" placeholder="min" min="0" step="0.5" style="width:64px">
+          <input type="number" id="f-max-dur" placeholder="max" min="0" step="0.5" style="width:64px">
+        </div>
+      </label>
+      <label>Min tickets
+        <input type="number" id="f-tickets" placeholder="0" min="0" style="width:64px">
+      </label>
+      <button class="btn btn-secondary btn-sm" id="btn-clear-filters">Clear</button>
+    </div>
+
+    <div class="results-meta" id="results-meta"></div>
+
+    <div class="event-table-wrap">
+      <div id="results-loading" class="loading-msg">
+        <div class="loading-spinner"></div><br>Loading events…
+      </div>
+      <table class="event-table" id="results-table" style="display:none">
+        <thead>
+          <tr>
+            <th class="col-time">Time</th>
+            <th class="col-title">Title</th>
+            <th class="col-type">Type</th>
+            <th class="col-system">System</th>
+            <th class="col-avail">Avail</th>
+            <th class="col-cost">Cost</th>
+            <th class="col-action"></th>
+          </tr>
+        </thead>
+        <tbody id="results-body"></tbody>
+      </table>
+    </div>
+
+    <div class="load-more-wrap" id="load-more-wrap" style="display:none">
+      <button class="btn btn-secondary" id="btn-load-more">Show more</button>
+    </div>
+  </div>
+</main>
+
+<!-- Detail Modal -->
+<div class="modal-overlay" id="detail-modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="detail-title">
+    <div class="modal-header">
+      <h2 id="detail-title"></h2>
+      <button class="modal-close" id="detail-close" aria-label="Close">×</button>
+    </div>
+    <div class="modal-body">
+      <div id="detail-conflict-alert" style="display:none" class="conflict-alert"></div>
+      <div class="detail-grid" id="detail-grid"></div>
+      <div class="detail-desc" id="detail-desc"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" id="detail-add">Add to Schedule</button>
+      <button class="btn btn-secondary" id="detail-alts">Find Alternatives</button>
+      <button class="btn btn-secondary" id="detail-close2">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Alternatives Modal -->
+<div class="modal-overlay" id="alts-modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="alts-title">
+    <div class="modal-header">
+      <h2 id="alts-title"></h2>
+      <button class="modal-close" id="alts-close" aria-label="Close">×</button>
+    </div>
+    <div class="modal-body" id="alts-body"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="alts-close2">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Conflict confirmation modal -->
+<div class="modal-overlay" id="conflict-modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="conflict-title">
+    <div class="modal-header">
+      <h2 id="conflict-title">Schedule Conflict</h2>
+      <button class="modal-close" id="conflict-close" aria-label="Close">×</button>
+    </div>
+    <div class="modal-body" id="conflict-body"></div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" id="conflict-add-anyway">Add Anyway</button>
+      <button class="btn btn-secondary" id="conflict-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="app.js"></script>
+<script>
+// ── Page state ─────────────────────────────────────────────
+let filteredEvents = [];
+let displayedCount = 0;
+let detailEventId  = null;
+
+// ── Boot ────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    await initApp();
+  } catch (err) {
+    document.getElementById('results-loading').innerHTML =
+      `<p style="color:var(--danger-text)">Failed to load events.json.<br><small>${err.message}</small><br>` +
+      `<small>Run <code>python scripts/build_events_json.py</code> first, then serve from the <code>docs/</code> folder.</small></p>`;
+    return;
+  }
+  document.getElementById('results-loading').style.display = 'none';
+  document.getElementById('results-table').style.display   = '';
+  populateTypeFilter();
+  updateHeaderCount();
+  runSearch();
+  bindEvents();
+});
+
+// ── Filters ──────────────────────────────────────────────────
+function getFilters() {
+  return {
+    query:      document.getElementById('q').value,
+    type:       document.getElementById('f-type').value,
+    day:        document.getElementById('f-day').value,
+    minDur:     parseFloat(document.getElementById('f-min-dur').value) || 0,
+    maxDur:     parseFloat(document.getElementById('f-max-dur').value) || 0,
+    minTickets: parseInt(document.getElementById('f-tickets').value,  10) || 0,
+  };
+}
+
+function populateTypeFilter() {
+  const sel = document.getElementById('f-type');
+  for (const t of allTypes()) {
+    const opt = document.createElement('option');
+    opt.value       = t.split(' - ')[0];
+    opt.textContent = t;
+    sel.appendChild(opt);
+  }
+}
+
+// ── Search & render ──────────────────────────────────────────
+function runSearch() {
+  filteredEvents = searchEvents(getFilters());
+  displayedCount = 0;
+  renderPage();
+}
+
+function renderPage() {
+  const total  = filteredEvents.length;
+  const toShow = filteredEvents.slice(0, displayedCount + PAGE_SIZE);
+  displayedCount = toShow.length;
+
+  const meta = document.getElementById('results-meta');
+  meta.textContent = total === 0 ? 'No events found.' :
+    `${total.toLocaleString()} event${total === 1 ? '' : 's'} found` +
+    (displayedCount < total ? ` — showing ${displayedCount}` : '');
+
+  const tbody = document.getElementById('results-body');
+  tbody.innerHTML = '';
+  for (const ev of toShow) tbody.appendChild(makeRow(ev));
+
+  const lmw = document.getElementById('load-more-wrap');
+  lmw.style.display = displayedCount < total ? '' : 'none';
+}
+
+function makeRow(ev) {
+  const tr   = document.createElement('tr');
+  const inSched = isScheduled(ev.id);
+  tr.innerHTML = `
+    <td class="col-time">${fmtSlot(ev)}</td>
+    <td class="col-title" data-id="${esc(ev.id)}">${esc(ev.title)}</td>
+    <td class="col-type"><span class="type-badge">${esc(shortType(ev.type))}</span></td>
+    <td class="col-system">${esc(ev.system || '')}</td>
+    <td class="col-avail">${fmtAvail(ev.ticketsAvailable)}</td>
+    <td class="col-cost">${fmtCost(ev.cost)}</td>
+    <td class="col-action">
+      ${inSched
+        ? `<button class="btn btn-success btn-sm" disabled>✓ Scheduled</button>`
+        : `<button class="btn btn-primary btn-sm btn-add" data-id="${esc(ev.id)}">+ Add</button>`}
+      <button class="btn btn-secondary btn-sm btn-info" data-id="${esc(ev.id)}" title="Details">⋯</button>
+    </td>`;
+  return tr;
+}
+
+// ── Update header count ──────────────────────────────────────
+function updateHeaderCount() {
+  const n = getIds().length;
+  document.getElementById('header-count').textContent =
+    n ? `${n} event${n === 1 ? '' : 's'} in schedule` : '';
+}
+
+// ── Detail modal ─────────────────────────────────────────────
+function openDetail(id) {
+  detailEventId = id;
+  const ev = EVENT_INDEX[id];
+  if (!ev) return;
+
+  document.getElementById('detail-title').textContent = ev.title;
+
+  const grid = document.getElementById('detail-grid');
+  const rows = [
+    ['Game ID',      ev.id],
+    ['Time',         fmtSlot(ev)],
+    ['Duration',     ev.duration ? `${ev.duration}h` : ''],
+    ['Type',         ev.type],
+    ['System',       ev.system],
+    ['Rules',        ev.rulesEdition],
+    ['Players',      ev.minPlayers && ev.maxPlayers ? `${ev.minPlayers}–${ev.maxPlayers}` : ''],
+    ['Age',          ev.ageRequired],
+    ['Experience',   ev.experienceRequired],
+    ['GM',           ev.gmNames],
+    ['Location',     [ev.location, ev.roomName, ev.tableNumber ? `Table ${ev.tableNumber}` : ''].filter(Boolean).join(' · ')],
+    ['Cost',         fmtCost(ev.cost)],
+    ['Tickets',      String(ev.ticketsAvailable)],
+    ['Tournament',   ev.tournament ? 'Yes' : 'No'],
+    ['Category',     ev.specialCategory && ev.specialCategory !== 'none' ? ev.specialCategory : ''],
+    ['Group',        ev.group],
+  ].filter(([, v]) => v);
+
+  grid.innerHTML = rows.map(([k, v]) =>
+    `<span class="label">${esc(k)}</span><span class="value">${esc(v)}</span>`
+  ).join('');
+
+  document.getElementById('detail-desc').innerHTML = [
+    ev.shortDesc ? `<p><strong>Summary:</strong> ${esc(ev.shortDesc)}</p>` : '',
+    ev.longDesc  ? `<p>${esc(ev.longDesc)}</p>` : '',
+  ].join('');
+
+  // Refresh add button state
+  refreshDetailAddBtn();
+  refreshDetailConflictAlert();
+
+  document.getElementById('detail-modal').classList.add('open');
+}
+
+function refreshDetailAddBtn() {
+  const btn = document.getElementById('detail-add');
+  if (isScheduled(detailEventId)) {
+    btn.textContent = '✓ Scheduled';
+    btn.disabled    = true;
+    btn.className   = 'btn btn-success';
+  } else {
+    btn.textContent = 'Add to Schedule';
+    btn.disabled    = false;
+    btn.className   = 'btn btn-primary';
+  }
+}
+
+function refreshDetailConflictAlert() {
+  const alert = document.getElementById('detail-conflict-alert');
+  if (isScheduled(detailEventId)) { alert.style.display = 'none'; return; }
+  const ev      = EVENT_INDEX[detailEventId];
+  const cfls    = findConflicts(ev, getScheduledEvents());
+  if (!cfls.length) { alert.style.display = 'none'; return; }
+  alert.style.display = '';
+  alert.innerHTML = `<strong>Conflict:</strong> Overlaps with scheduled event${cfls.length > 1 ? 's' : ''}:
+    <ul>${cfls.map(c => `<li>${esc(c.title)} — ${fmtSlot(c)}</li>`).join('')}</ul>`;
+}
+
+// ── Alternatives modal ────────────────────────────────────────
+function openAlternatives(id) {
+  const ev   = EVENT_INDEX[id];
+  const alts = getAlternatives(id);
+  document.getElementById('alts-title').textContent = `All timeslots: ${ev.title}`;
+
+  const body = document.getElementById('alts-body');
+  if (!alts.length) {
+    body.innerHTML = '<p class="empty-msg">No alternative timeslots found.</p>';
+  } else {
+    body.innerHTML = alts.map(a => {
+      const statusLabel = a._inSchedule ? '✓ In your schedule'
+        : a._conflicts.length ? `Conflicts: ${a._conflicts.map(c => esc(c.title)).join(', ')}`
+        : 'Free';
+      const statusCls = `alt-status ${a._status}`;
+      const addBtn    = (!a._inSchedule && a._status === 'free')
+        ? `<button class="btn btn-primary btn-sm btn-alt-add" data-id="${esc(a.id)}">+ Add</button>`
+        : '';
+      return `<div class="alt-row">
+        <span class="alt-slot">${fmtSlot(a)}</span>
+        <span class="alt-avail">${fmtAvail(a.ticketsAvailable)}</span>
+        <span class="${statusCls}">${statusLabel}</span>
+        ${addBtn}
+      </div>`;
+    }).join('');
+  }
+  document.getElementById('alts-modal').classList.add('open');
+}
+
+// ── Conflict confirmation ─────────────────────────────────────
+let pendingAddId   = null;
+let pendingAddCfls = [];
+
+function promptConflict(id, conflicts) {
+  pendingAddId   = id;
+  pendingAddCfls = conflicts;
+  const ev = EVENT_INDEX[id];
+  document.getElementById('conflict-body').innerHTML =
+    `<p>Adding <strong>${esc(ev.title)}</strong> (${fmtSlot(ev)}) overlaps with:</p>
+     <ul>${conflicts.map(c => `<li>${esc(c.title)} — ${fmtSlot(c)}</li>`).join('')}</ul>
+     <p>Add it to your schedule anyway?</p>`;
+  document.getElementById('conflict-modal').classList.add('open');
+}
+
+// ── Handle add ────────────────────────────────────────────────
+function handleAdd(id, fromConflictModal = false) {
+  const result = addEvent(id, fromConflictModal);
+  if (result.status === 'already') {
+    showToast('Already in your schedule', 'warn');
+  } else if (result.status === 'conflict') {
+    promptConflict(id, result.conflicts);
+  } else if (result.status === 'ok') {
+    const ev = EVENT_INDEX[id];
+    const msg = result.conflicts.length ? `Added (with conflict): ${ev.title}` : `Added: ${ev.title}`;
+    showToast(msg, result.conflicts.length ? 'warn' : 'ok');
+    // Refresh rows + header
+    rerenderRow(id);
+    updateHeaderCount();
+    if (detailEventId === id) { refreshDetailAddBtn(); refreshDetailConflictAlert(); }
+  }
+}
+
+function rerenderRow(id) {
+  const trs = document.querySelectorAll('#results-body tr');
+  for (const tr of trs) {
+    const titleCell = tr.querySelector('.col-title');
+    if (titleCell && titleCell.dataset.id === id) {
+      const newTr = makeRow(EVENT_INDEX[id]);
+      tr.replaceWith(newTr);
+      bindRowEvents(newTr);
+      return;
+    }
+  }
+}
+
+// ── Event binding ─────────────────────────────────────────────
+let searchTimer = null;
+
+function bindEvents() {
+  // Search inputs
+  for (const id of ['q', 'f-type', 'f-day', 'f-min-dur', 'f-max-dur', 'f-tickets']) {
+    document.getElementById(id).addEventListener('input', () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(runSearch, id === 'q' ? 300 : 0);
+    });
+  }
+
+  // Clear filters
+  document.getElementById('btn-clear-filters').addEventListener('click', () => {
+    document.getElementById('q').value          = '';
+    document.getElementById('f-type').value     = '';
+    document.getElementById('f-day').value      = '';
+    document.getElementById('f-min-dur').value  = '';
+    document.getElementById('f-max-dur').value  = '';
+    document.getElementById('f-tickets').value  = '';
+    runSearch();
+  });
+
+  // Load more
+  document.getElementById('btn-load-more').addEventListener('click', renderPage);
+
+  // Results table delegation
+  document.getElementById('results-body').addEventListener('click', e => {
+    const addBtn  = e.target.closest('.btn-add');
+    const infoBtn = e.target.closest('.btn-info');
+    const titleEl = e.target.closest('.col-title');
+    if (addBtn)  handleAdd(addBtn.dataset.id);
+    if (infoBtn) openDetail(infoBtn.dataset.id);
+    if (titleEl) openDetail(titleEl.dataset.id);
+  });
+
+  // Detail modal
+  document.getElementById('detail-close').addEventListener('click',  () => closeModal('detail-modal'));
+  document.getElementById('detail-close2').addEventListener('click', () => closeModal('detail-modal'));
+  document.getElementById('detail-add').addEventListener('click',    () => handleAdd(detailEventId));
+  document.getElementById('detail-alts').addEventListener('click',   () => {
+    closeModal('detail-modal');
+    openAlternatives(detailEventId);
+  });
+
+  // Alternatives modal
+  document.getElementById('alts-close').addEventListener('click',  () => closeModal('alts-modal'));
+  document.getElementById('alts-close2').addEventListener('click', () => closeModal('alts-modal'));
+  document.getElementById('alts-body').addEventListener('click', e => {
+    const btn = e.target.closest('.btn-alt-add');
+    if (btn) handleAdd(btn.dataset.id);
+  });
+
+  // Conflict modal
+  document.getElementById('conflict-close').addEventListener('click',  () => closeModal('conflict-modal'));
+  document.getElementById('conflict-cancel').addEventListener('click', () => closeModal('conflict-modal'));
+  document.getElementById('conflict-add-anyway').addEventListener('click', () => {
+    closeModal('conflict-modal');
+    if (pendingAddId) handleAdd(pendingAddId, true);
+  });
+
+  // Close modals on overlay click
+  for (const id of ['detail-modal', 'alts-modal', 'conflict-modal']) {
+    document.getElementById(id).addEventListener('click', e => {
+      if (e.target === document.getElementById(id)) closeModal(id);
+    });
+  }
+
+  // Close on Escape
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      for (const id of ['conflict-modal', 'alts-modal', 'detail-modal']) {
+        if (document.getElementById(id).classList.contains('open')) {
+          closeModal(id);
+          break;
+        }
+      }
+    }
+  });
+}
+
+function bindRowEvents(tr) {
+  // Rows added via rerenderRow already get picked up by delegation — no-op needed.
+}
+
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+}
+
+// ── Escape helper ─────────────────────────────────────────────
+function esc(str) {
+  return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+</body>
+</html>

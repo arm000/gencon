@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GenCon 2026 – My Schedule</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <a class="logo" href="index.html">GenCon 2026</a>
+  <nav>
+    <a href="index.html">Search</a>
+    <a href="schedule.html" class="active">My Schedule</a>
+  </nav>
+  <span class="header-right" id="header-count"></span>
+</header>
+
+<main>
+  <div class="schedule-layout">
+
+    <!-- Left: schedule agenda -->
+    <div>
+      <div class="card">
+        <div class="schedule-toolbar">
+          <h2 style="margin:0;font-size:1.05rem">My Schedule</h2>
+          <button class="btn btn-secondary btn-sm" id="btn-export">Export JSON</button>
+          <label class="btn btn-secondary btn-sm" style="cursor:pointer">
+            Import JSON
+            <input type="file" id="import-input" accept=".json" style="display:none">
+          </label>
+          <span class="schedule-count" id="schedule-count"></span>
+        </div>
+
+        <div id="schedule-loading" class="loading-msg">
+          <div class="loading-spinner"></div><br>Loading events…
+        </div>
+        <div id="schedule-body" style="display:none"></div>
+      </div>
+    </div>
+
+    <!-- Right: suggest panel -->
+    <div class="suggest-panel">
+      <div class="card">
+        <h2>Suggestions for gaps</h2>
+
+        <div class="suggest-filters">
+          <label>Day
+            <select id="sug-day">
+              <option value="">All days</option>
+              <option value="Thu">Thu (Jul 30)</option>
+              <option value="Fri">Fri (Jul 31)</option>
+              <option value="Sat">Sat (Aug 1)</option>
+              <option value="Sun">Sun (Aug 2)</option>
+              <option value="Mon">Mon (Aug 3)</option>
+            </select>
+          </label>
+          <label>Type
+            <select id="sug-type">
+              <option value="">Any type</option>
+            </select>
+          </label>
+          <label>Dur (h)
+            <div class="filter-group">
+              <input type="number" id="sug-min-dur" placeholder="min" min="0" step="0.5" style="width:56px">
+              <input type="number" id="sug-max-dur" placeholder="max" min="0" step="0.5" style="width:56px">
+            </div>
+          </label>
+          <label>Min tickets
+            <input type="number" id="sug-tickets" placeholder="0" min="0" style="width:60px">
+          </label>
+        </div>
+
+        <div id="suggest-loading" class="loading-msg" style="display:none">
+          <div class="loading-spinner"></div>
+        </div>
+        <div id="suggest-body"></div>
+      </div>
+    </div>
+
+  </div><!-- /.schedule-layout -->
+</main>
+
+<!-- Detail Modal -->
+<div class="modal-overlay" id="detail-modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="detail-title">
+    <div class="modal-header">
+      <h2 id="detail-title"></h2>
+      <button class="modal-close" id="detail-close" aria-label="Close">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="detail-grid" id="detail-grid"></div>
+      <div class="detail-desc"  id="detail-desc"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="detail-close2">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Conflict confirmation modal -->
+<div class="modal-overlay" id="conflict-modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="conflict-title">
+    <div class="modal-header">
+      <h2 id="conflict-title">Schedule Conflict</h2>
+      <button class="modal-close" id="conflict-close" aria-label="Close">×</button>
+    </div>
+    <div class="modal-body" id="conflict-body"></div>
+    <div class="modal-footer">
+      <button class="btn btn-primary"   id="conflict-add-anyway">Add Anyway</button>
+      <button class="btn btn-secondary" id="conflict-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="app.js"></script>
+<script>
+// ── Constants ─────────────────────────────────────────────────
+const SUGGEST_PER_GAP = 5;
+
+// ── State ─────────────────────────────────────────────────────
+let pendingAddId   = null;
+let pendingAddCfls = [];
+let detailEventId  = null;
+
+// ── Boot ─────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    await initApp();
+  } catch (err) {
+    const msg = `<p style="color:var(--danger-text)">Failed to load events.json.<br>
+      <small>${esc(err.message)}</small></p>`;
+    document.getElementById('schedule-loading').innerHTML = msg;
+    document.getElementById('suggest-body').innerHTML     = msg;
+    return;
+  }
+
+  document.getElementById('schedule-loading').style.display = 'none';
+  document.getElementById('schedule-body').style.display    = '';
+
+  populateSuggestTypeFilter();
+  renderSchedule();
+  renderSuggestions();
+  bindEvents();
+});
+
+// ── Schedule rendering ────────────────────────────────────────
+function renderSchedule() {
+  const ids      = getIds();
+  const body     = document.getElementById('schedule-body');
+  const countEl  = document.getElementById('schedule-count');
+  const headerEl = document.getElementById('header-count');
+
+  countEl.textContent  = `${ids.length} event${ids.length === 1 ? '' : 's'}`;
+  headerEl.textContent = ids.length ? `${ids.length} scheduled` : '';
+
+  if (!ids.length) {
+    body.innerHTML = `<p class="no-schedule-msg">No events scheduled yet.
+      <a href="index.html">Search events</a> to get started.</p>`;
+    return;
+  }
+
+  // Group by day, sorted by start time
+  const byDay = {};
+  for (const dateKey of CONV_DATES) byDay[dateKey] = [];
+
+  for (const id of ids) {
+    const ev = EVENT_INDEX[id];
+    if (!ev) continue;
+    const dk = (ev.start || '').slice(0, 5);
+    if (byDay[dk]) byDay[dk].push(ev);
+    else byDay['??'] = (byDay['??'] || []).concat(ev);
+  }
+
+  // Detect conflicts across the whole schedule
+  const allSched    = ids.map(i => EVENT_INDEX[i]).filter(Boolean);
+  const conflictIds = new Set();
+  for (const ev of allSched) {
+    const cfls = findConflicts(ev, allSched.filter(e => e.id !== ev.id));
+    if (cfls.length) conflictIds.add(ev.id);
+  }
+
+  let html = '';
+  for (const dateKey of CONV_DATES) {
+    const evs = byDay[dateKey];
+    evs.sort((a, b) => {
+      const sa = parseTime(a.start), sb = parseTime(b.start);
+      return sa && sb ? sa - sb : 0;
+    });
+
+    const mo = dateKey.slice(0, 2), dy = dateKey.slice(3);
+    const dateFmt = `${DAYS_MAP[dateKey]}, ${monthName(+mo)} ${+dy}`;
+
+    html += `<div class="day-block">
+      <h3>${DAYS_MAP[dateKey] || dateKey} <span class="day-date">${dateFmt}</span></h3>`;
+
+    if (!evs.length) {
+      html += `<div class="empty-day">Nothing scheduled</div>`;
+    } else {
+      for (const ev of evs) {
+        const isConflict = conflictIds.has(ev.id);
+        const loc = [ev.location, ev.roomName, ev.tableNumber ? `Tbl ${ev.tableNumber}` : ''].filter(Boolean).join(' · ');
+        html += `<div class="schedule-event ${isConflict ? 'conflict-event' : ''}" data-id="${esc(ev.id)}">
+          <span class="se-time">${fmtSlot(ev)}</span>
+          <span class="se-title" data-id="${esc(ev.id)}">${esc(ev.title)}</span>
+          <span class="se-type">${esc(shortType(ev.type))}</span>
+          <span class="se-loc">${esc(loc)}</span>
+          ${isConflict ? '<span style="color:var(--danger-text);font-size:.75rem">⚠ conflict</span>' : ''}
+          <span class="se-remove">
+            <button class="btn btn-danger btn-sm btn-remove" data-id="${esc(ev.id)}">Remove</button>
+          </span>
+        </div>`;
+      }
+    }
+    html += `</div>`;
+  }
+  body.innerHTML = html;
+}
+
+// ── Suggestions rendering ─────────────────────────────────────
+function getSuggestFilters() {
+  return {
+    type:       document.getElementById('sug-type').value,
+    minDur:     parseFloat(document.getElementById('sug-min-dur').value) || 0,
+    maxDur:     parseFloat(document.getElementById('sug-max-dur').value) || 0,
+    minTickets: parseInt(document.getElementById('sug-tickets').value, 10) || 0,
+  };
+}
+
+function renderSuggestions() {
+  const dayFilter = document.getElementById('sug-day').value;
+  const filters   = getSuggestFilters();
+  const gaps      = getSuggestions(filters, dayFilter || null);
+  const body      = document.getElementById('suggest-body');
+
+  if (!gaps.length) {
+    body.innerHTML = `<p class="no-schedule-msg">No suggestions found${
+      getIds().length ? ' for current filters.' :
+      '. Add events to your schedule first, then suggestions will appear for your free time.'
+    }</p>`;
+    return;
+  }
+
+  let html = '';
+  for (const { dayLabel, gapStart, gapEnd, gapHours, events } of gaps) {
+    const label = `${dayLabel} ${fmtTime(gapStart)} – ${fmtTime(gapEnd)} (${gapHours % 1 === 0 ? gapHours : gapHours.toFixed(1)}h free)`;
+    const shown = events.slice(0, SUGGEST_PER_GAP);
+    const more  = events.length - shown.length;
+
+    html += `<div class="gap-block">
+      <div class="gap-header">${esc(label)}</div>`;
+
+    for (const ev of shown) {
+      const s = parseTime(ev.start), e = parseTime(ev.end);
+      const slot = s && e ? `${fmtTime(s)}–${fmtTime(e)}` : '';
+      html += `<div class="suggest-event">
+        <span class="sug-time">${esc(slot)}</span>
+        <span class="sug-title" data-id="${esc(ev.id)}">${esc(ev.title)}</span>
+        <span class="sug-avail">${fmtAvail(ev.ticketsAvailable)}</span>
+        <span class="sug-add">
+          <button class="btn btn-primary btn-sm btn-sug-add" data-id="${esc(ev.id)}">+ Add</button>
+        </span>
+      </div>`;
+    }
+
+    if (more > 0) {
+      html += `<span class="more-link" data-gap-expand>… ${more} more. Adjust filters to narrow.</span>`;
+    }
+
+    html += `</div>`;
+  }
+
+  body.innerHTML = html;
+}
+
+function populateSuggestTypeFilter() {
+  const sel = document.getElementById('sug-type');
+  for (const t of allTypes()) {
+    const opt = document.createElement('option');
+    opt.value       = t.split(' - ')[0];
+    opt.textContent = t;
+    sel.appendChild(opt);
+  }
+}
+
+// ── Detail modal ─────────────────────────────────────────────
+function openDetail(id) {
+  detailEventId = id;
+  const ev = EVENT_INDEX[id];
+  if (!ev) return;
+  document.getElementById('detail-title').textContent = ev.title;
+  const rows = [
+    ['Game ID',    ev.id],
+    ['Time',       fmtSlot(ev)],
+    ['Duration',   ev.duration ? `${ev.duration}h` : ''],
+    ['Type',       ev.type],
+    ['System',     ev.system],
+    ['GM',         ev.gmNames],
+    ['Location',   [ev.location, ev.roomName, ev.tableNumber ? `Table ${ev.tableNumber}` : ''].filter(Boolean).join(' · ')],
+    ['Cost',       fmtCost(ev.cost)],
+    ['Tickets',    String(ev.ticketsAvailable)],
+    ['Players',    ev.minPlayers && ev.maxPlayers ? `${ev.minPlayers}–${ev.maxPlayers}` : ''],
+    ['Age',        ev.ageRequired],
+    ['Experience', ev.experienceRequired],
+  ].filter(([, v]) => v);
+  document.getElementById('detail-grid').innerHTML = rows.map(([k, v]) =>
+    `<span class="label">${esc(k)}</span><span class="value">${esc(v)}</span>`
+  ).join('');
+  document.getElementById('detail-desc').innerHTML = [
+    ev.shortDesc ? `<p><strong>Summary:</strong> ${esc(ev.shortDesc)}</p>` : '',
+    ev.longDesc  ? `<p>${esc(ev.longDesc)}</p>` : '',
+  ].join('');
+  document.getElementById('detail-modal').classList.add('open');
+}
+
+// ── Handle add ────────────────────────────────────────────────
+function handleAdd(id, force = false) {
+  const result = addEvent(id, force);
+  if (result.status === 'already') {
+    showToast('Already in your schedule', 'warn');
+  } else if (result.status === 'conflict') {
+    promptConflict(id, result.conflicts);
+  } else if (result.status === 'ok') {
+    const ev  = EVENT_INDEX[id];
+    const msg = result.conflicts.length ? `Added (with conflict): ${ev.title}` : `Added: ${ev.title}`;
+    showToast(msg, result.conflicts.length ? 'warn' : 'ok');
+    renderSchedule();
+    renderSuggestions();
+  }
+}
+
+function promptConflict(id, conflicts) {
+  pendingAddId   = id;
+  pendingAddCfls = conflicts;
+  const ev = EVENT_INDEX[id];
+  document.getElementById('conflict-body').innerHTML =
+    `<p>Adding <strong>${esc(ev.title)}</strong> (${fmtSlot(ev)}) overlaps with:</p>
+     <ul>${conflicts.map(c => `<li>${esc(c.title)} — ${fmtSlot(c)}</li>`).join('')}</ul>
+     <p>Add it anyway?</p>`;
+  document.getElementById('conflict-modal').classList.add('open');
+}
+
+// ── Event bindings ────────────────────────────────────────────
+let suggestTimer = null;
+
+function bindEvents() {
+  // Export
+  document.getElementById('btn-export').addEventListener('click', () => {
+    exportSchedule();
+    showToast('Schedule exported');
+  });
+
+  // Import
+  document.getElementById('import-input').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const count = importSchedule(ev.target.result);
+        showToast(`Imported ${count} event${count === 1 ? '' : 's'}`);
+        renderSchedule();
+        renderSuggestions();
+      } catch (err) {
+        showToast('Import failed: ' + err.message, 'err');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  });
+
+  // Schedule body delegation (remove, title click)
+  document.getElementById('schedule-body').addEventListener('click', e => {
+    const removeBtn = e.target.closest('.btn-remove');
+    const titleEl   = e.target.closest('.se-title');
+    if (removeBtn) {
+      const id = removeBtn.dataset.id;
+      removeEvent(id);
+      showToast(`Removed: ${EVENT_INDEX[id]?.title || id}`, 'warn');
+      renderSchedule();
+      renderSuggestions();
+    }
+    if (titleEl) openDetail(titleEl.dataset.id);
+  });
+
+  // Suggest body delegation (add, title click)
+  document.getElementById('suggest-body').addEventListener('click', e => {
+    const addBtn  = e.target.closest('.btn-sug-add');
+    const titleEl = e.target.closest('.sug-title');
+    if (addBtn)  handleAdd(addBtn.dataset.id);
+    if (titleEl) openDetail(titleEl.dataset.id);
+  });
+
+  // Suggest filters
+  for (const id of ['sug-day', 'sug-type', 'sug-min-dur', 'sug-max-dur', 'sug-tickets']) {
+    document.getElementById(id).addEventListener('input', () => {
+      clearTimeout(suggestTimer);
+      suggestTimer = setTimeout(renderSuggestions, 200);
+    });
+  }
+
+  // Detail modal
+  document.getElementById('detail-close').addEventListener('click',  () => closeModal('detail-modal'));
+  document.getElementById('detail-close2').addEventListener('click', () => closeModal('detail-modal'));
+
+  // Conflict modal
+  document.getElementById('conflict-close').addEventListener('click',  () => closeModal('conflict-modal'));
+  document.getElementById('conflict-cancel').addEventListener('click', () => closeModal('conflict-modal'));
+  document.getElementById('conflict-add-anyway').addEventListener('click', () => {
+    closeModal('conflict-modal');
+    if (pendingAddId) handleAdd(pendingAddId, true);
+  });
+
+  // Overlay click to close
+  for (const id of ['detail-modal', 'conflict-modal']) {
+    document.getElementById(id).addEventListener('click', e => {
+      if (e.target === document.getElementById(id)) closeModal(id);
+    });
+  }
+
+  // Escape key
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      for (const id of ['conflict-modal', 'detail-modal']) {
+        if (document.getElementById(id).classList.contains('open')) { closeModal(id); break; }
+      }
+    }
+  });
+}
+
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+}
+
+// ── Utilities ─────────────────────────────────────────────────
+function monthName(m) {
+  return ['', 'Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m] || '';
+}
+
+function esc(str) {
+  return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,34 @@
+name: Refresh Events Data
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"   # every 6 hours, matching GenCon's update cadence
+  workflow_dispatch:          # manual trigger from the Actions tab
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests openpyxl
+
+      - name: Download and convert events
+        run: python scripts/build_events_json.py
+
+      - name: Commit updated events.json
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/events.json
+          git diff --cached --quiet \
+            || git commit -m "chore: refresh events data [skip ci]"
+          git push
