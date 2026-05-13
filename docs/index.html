@@ -69,6 +69,7 @@
             <th class="col-system">System</th>
             <th class="col-avail">Avail</th>
             <th class="col-cost">Cost</th>
+            <th class="col-conflict"></th>
             <th class="col-action"></th>
           </tr>
         </thead>
@@ -222,11 +223,11 @@ function makeRow(ev) {
     <td class="col-system">${esc(ev.system || '')}</td>
     <td class="col-avail">${fmtAvail(ev.ticketsAvailable)}</td>
     <td class="col-cost">${fmtCost(ev.cost)}</td>
+    <td class="col-conflict">${hasConflict ? `<span class="conflict-badge" title="${esc(conflictTip)}">⚠ conflict</span>` : ''}</td>
     <td class="col-action">
       ${inSched
         ? `<button class="btn btn-success btn-sm" disabled>✓ Scheduled</button>`
         : `<button class="btn btn-primary btn-sm btn-add" data-id="${esc(ev.id)}">+ Add</button>`}
-      ${hasConflict ? `<span class="conflict-badge" title="${esc(conflictTip)}">⚠ conflict</span>` : ''}
       <button class="btn btn-secondary btn-sm btn-info" data-id="${esc(ev.id)}" title="Details">⋯</button>
     </td>`;
   return tr;

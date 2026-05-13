@@ -212,7 +212,8 @@ table.event-table .col-title:hover { text-decoration: underline; }
 table.event-table .col-type   { white-space: nowrap; }
 table.event-table .col-avail  { text-align: right; }
 table.event-table .col-cost   { text-align: right; white-space: nowrap; }
-table.event-table .col-action { white-space: nowrap; text-align: right; }
+table.event-table .col-conflict { white-space: nowrap; text-align: right; }
+table.event-table .col-action  { white-space: nowrap; text-align: right; }
 table.event-table tr.row-conflict td { background: #fff8f8; }
 table.event-table tr.row-conflict:hover td { background: #ffeeee; }
 .conflict-badge {
