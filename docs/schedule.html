@@ -569,11 +569,11 @@ function initAiPanel() {
         { existingMessages: convMessages, existingSystemPrompt: convSystem },
         msg => appendProgress(msg),
         chunk => { textAccum += chunk; },
-        ({ messages, systemPrompt }) => {
-          convMessages = messages;
-          convSystem   = systemPrompt;
+        (result = {}) => {
+          convMessages = result.messages || null;
+          convSystem   = result.systemPrompt || null;
           output.insertAdjacentHTML('beforeend', renderTurn(textAccum));
-          showFollowUp();
+          if (convMessages) showFollowUp();
           output.scrollTop = output.scrollHeight;
         },
         err => {
@@ -608,12 +608,12 @@ function initAiPanel() {
       { count, day, eventType, minDur, maxDur },
       msg => appendProgress(msg),
       chunk => { textAccum += chunk; },
-      ({ messages, systemPrompt }) => {
+      (result = {}) => {
         goBtn.disabled = false;
-        convMessages = messages;
-        convSystem   = systemPrompt;
+        convMessages = result.messages || null;
+        convSystem   = result.systemPrompt || null;
         output.innerHTML = renderTurn(textAccum);
-        showFollowUp();
+        if (convMessages) showFollowUp();
         output.scrollTop = 0;
       },
       err => {
