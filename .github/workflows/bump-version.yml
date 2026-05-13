@@ -1,0 +1,37 @@
+name: Bump Version
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  bump:
+    # Don't run on commits made by this workflow itself
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update version.json and cache-bust HTML
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          BUILD=$(date +%Y%m%d%H%M)
+          BUILT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          # Preserve event count from existing version.json
+          COUNT=$(python3 -c \
+            "import json; print(json.load(open('docs/version.json'))['count'])" \
+            2>/dev/null || echo 0)
+
+          echo "{\"built\":\"$BUILT\",\"count\":$COUNT}" > docs/version.json
+          sed -i "s/?v=[0-9]*/?v=${BUILD}/g" docs/index.html docs/schedule.html
+
+          git add docs/version.json docs/index.html docs/schedule.html
+          git diff --cached --quiet \
+            || git commit -m "chore: bump version to ${BUILD} [skip ci]"
+          git push
