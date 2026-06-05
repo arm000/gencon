@@ -207,6 +207,13 @@ table.event-table th {
   text-transform: uppercase;
   letter-spacing: .03em;
 }
+table.event-table th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+table.event-table th.sortable:hover { color: var(--text); }
+table.event-table th.sort-asc::after  { content: ' ▲'; }
+table.event-table th.sort-desc::after { content: ' ▼'; }
 
 table.event-table td {
   padding: .45rem .6rem;

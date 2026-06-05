@@ -70,12 +70,12 @@
       <table class="event-table" id="results-table" style="display:none">
         <thead>
           <tr>
-            <th class="col-time">Time</th>
-            <th class="col-title">Title</th>
-            <th class="col-type">Type</th>
-            <th class="col-system">System</th>
-            <th class="col-avail">Avail</th>
-            <th class="col-cost">Cost</th>
+            <th class="col-time sortable" data-sort="time">Time</th>
+            <th class="col-title sortable" data-sort="title">Title</th>
+            <th class="col-type sortable" data-sort="type">Type</th>
+            <th class="col-system sortable" data-sort="system">System</th>
+            <th class="col-avail sortable" data-sort="avail">Avail</th>
+            <th class="col-cost sortable" data-sort="cost">Cost</th>
             <th class="col-conflict"></th>
             <th class="col-action"></th>
           </tr>
@@ -148,6 +148,8 @@
 let filteredEvents = [];
 let displayedCount = 0;
 let detailEventId  = null;
+let sortCol        = null;  // active sort column key, or null
+let sortDir        = 1;     // 1 = asc, -1 = desc
 
 // ── Boot ────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
@@ -192,6 +194,34 @@ function populateTypeFilter() {
   }
 }
 
+// ── Sort ─────────────────────────────────────────────────────
+function applySort() {
+  if (!sortCol) return;
+  filteredEvents.sort((a, b) => {
+    let cmp = 0;
+    switch (sortCol) {
+      case 'time': {
+        const sa = parseTime(a.start), sb = parseTime(b.start);
+        cmp = (sa && sb) ? sa - sb : 0;
+        break;
+      }
+      case 'title':  cmp = (a.title  || '').localeCompare(b.title  || ''); break;
+      case 'type':   cmp = (a.type   || '').localeCompare(b.type   || ''); break;
+      case 'system': cmp = (a.system || '').localeCompare(b.system || ''); break;
+      case 'avail':  cmp = (a.ticketsAvailable || 0) - (b.ticketsAvailable || 0); break;
+      case 'cost':   cmp = (a.cost   || 0) - (b.cost   || 0); break;
+    }
+    return cmp * sortDir;
+  });
+}
+
+function updateSortHeaders() {
+  for (const th of document.querySelectorAll('#results-table thead th[data-sort]')) {
+    th.classList.toggle('sort-asc',  th.dataset.sort === sortCol && sortDir ===  1);
+    th.classList.toggle('sort-desc', th.dataset.sort === sortCol && sortDir === -1);
+  }
+}
+
 // ── Search & render ──────────────────────────────────────────
 function runSearch() {
   const filters = getFilters();
@@ -202,6 +232,7 @@ function runSearch() {
       isScheduled(ev.id) || findConflicts(ev, scheduled).length === 0
     );
   }
+  applySort();
   displayedCount = 0;
   renderPage();
 }
@@ -429,6 +460,23 @@ function bindEvents() {
 
   // Load more
   document.getElementById('btn-load-more').addEventListener('click', renderPage);
+
+  // Column sort
+  document.querySelector('#results-table thead').addEventListener('click', e => {
+    const th = e.target.closest('th[data-sort]');
+    if (!th) return;
+    const col = th.dataset.sort;
+    if (sortCol === col) {
+      sortDir *= -1;
+    } else {
+      sortCol = col;
+      sortDir = 1;
+    }
+    updateSortHeaders();
+    applySort();
+    displayedCount = 0;
+    renderPage();
+  });
 
   // Results table delegation
   document.getElementById('results-body').addEventListener('click', e => {
