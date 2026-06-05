@@ -217,8 +217,10 @@ function applySort() {
 
 function updateSortHeaders() {
   for (const th of document.querySelectorAll('#results-table thead th[data-sort]')) {
-    th.classList.toggle('sort-asc',  th.dataset.sort === sortCol && sortDir ===  1);
-    th.classList.toggle('sort-desc', th.dataset.sort === sortCol && sortDir === -1);
+    if (!th.dataset.label) th.dataset.label = th.textContent.trim();
+    const active = th.dataset.sort === sortCol;
+    th.textContent = th.dataset.label + (active ? (sortDir === 1 ? ' ▲' : ' ▼') : '');
+    th.classList.toggle('sort-active', active);
   }
 }
 

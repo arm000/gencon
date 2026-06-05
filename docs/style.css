@@ -212,8 +212,7 @@ table.event-table th.sortable {
   user-select: none;
 }
 table.event-table th.sortable:hover { color: var(--text); }
-table.event-table th.sort-asc::after  { content: ' ▲'; }
-table.event-table th.sort-desc::after { content: ' ▼'; }
+table.event-table th.sort-active { color: var(--text); }
 
 table.event-table td {
   padding: .45rem .6rem;
