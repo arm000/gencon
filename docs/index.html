@@ -50,6 +50,10 @@
       <label>Min tickets
         <input type="number" id="f-tickets" placeholder="0" min="0" style="width:64px">
       </label>
+      <label class="filter-checkbox">
+        <input type="checkbox" id="f-hide-soldout">
+        Hide sold out
+      </label>
       <button class="btn btn-secondary btn-sm" id="btn-clear-filters">Clear</button>
     </div>
 
@@ -161,13 +165,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // ── Filters ──────────────────────────────────────────────────
 function getFilters() {
+  const minTickets  = parseInt(document.getElementById('f-tickets').value, 10) || 0;
+  const hideSoldOut = document.getElementById('f-hide-soldout').checked;
   return {
     query:      document.getElementById('q').value,
     type:       document.getElementById('f-type').value,
     day:        document.getElementById('f-day').value,
     minDur:     parseFloat(document.getElementById('f-min-dur').value) || 0,
     maxDur:     parseFloat(document.getElementById('f-max-dur').value) || 0,
-    minTickets: parseInt(document.getElementById('f-tickets').value,  10) || 0,
+    minTickets: hideSoldOut ? Math.max(minTickets, 1) : minTickets,
   };
 }
 
@@ -393,15 +399,17 @@ function bindEvents() {
       searchTimer = setTimeout(runSearch, id === 'q' ? 300 : 0);
     });
   }
+  document.getElementById('f-hide-soldout').addEventListener('change', runSearch);
 
   // Clear filters
   document.getElementById('btn-clear-filters').addEventListener('click', () => {
-    document.getElementById('q').value          = '';
-    document.getElementById('f-type').value     = '';
-    document.getElementById('f-day').value      = '';
-    document.getElementById('f-min-dur').value  = '';
-    document.getElementById('f-max-dur').value  = '';
-    document.getElementById('f-tickets').value  = '';
+    document.getElementById('q').value                  = '';
+    document.getElementById('f-type').value             = '';
+    document.getElementById('f-day').value              = '';
+    document.getElementById('f-min-dur').value          = '';
+    document.getElementById('f-max-dur').value          = '';
+    document.getElementById('f-tickets').value          = '';
+    document.getElementById('f-hide-soldout').checked   = false;
     runSearch();
   });
 

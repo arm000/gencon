@@ -146,6 +146,16 @@ main {
   align-items: flex-end;
 }
 
+.filters .filter-checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: .35rem;
+  color: var(--text-muted);
+  font-size: .85rem;
+  cursor: pointer;
+  user-select: none;
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
