@@ -54,6 +54,10 @@
         <input type="checkbox" id="f-hide-soldout">
         Hide sold out
       </label>
+      <label class="filter-checkbox">
+        <input type="checkbox" id="f-hide-conflicts">
+        Hide conflicts
+      </label>
       <button class="btn btn-secondary btn-sm" id="btn-clear-filters">Clear</button>
     </div>
 
@@ -168,12 +172,13 @@ function getFilters() {
   const minTickets  = parseInt(document.getElementById('f-tickets').value, 10) || 0;
   const hideSoldOut = document.getElementById('f-hide-soldout').checked;
   return {
-    query:      document.getElementById('q').value,
-    type:       document.getElementById('f-type').value,
-    day:        document.getElementById('f-day').value,
-    minDur:     parseFloat(document.getElementById('f-min-dur').value) || 0,
-    maxDur:     parseFloat(document.getElementById('f-max-dur').value) || 0,
-    minTickets: hideSoldOut ? Math.max(minTickets, 1) : minTickets,
+    query:         document.getElementById('q').value,
+    type:          document.getElementById('f-type').value,
+    day:           document.getElementById('f-day').value,
+    minDur:        parseFloat(document.getElementById('f-min-dur').value) || 0,
+    maxDur:        parseFloat(document.getElementById('f-max-dur').value) || 0,
+    minTickets:    hideSoldOut ? Math.max(minTickets, 1) : minTickets,
+    hideConflicts: document.getElementById('f-hide-conflicts').checked,
   };
 }
 
@@ -189,7 +194,14 @@ function populateTypeFilter() {
 
 // ── Search & render ──────────────────────────────────────────
 function runSearch() {
-  filteredEvents = searchEvents(getFilters());
+  const filters = getFilters();
+  filteredEvents = searchEvents(filters);
+  if (filters.hideConflicts) {
+    const scheduled = getScheduledEvents();
+    filteredEvents = filteredEvents.filter(ev =>
+      isScheduled(ev.id) || findConflicts(ev, scheduled).length === 0
+    );
+  }
   displayedCount = 0;
   renderPage();
 }
@@ -400,6 +412,7 @@ function bindEvents() {
     });
   }
   document.getElementById('f-hide-soldout').addEventListener('change', runSearch);
+  document.getElementById('f-hide-conflicts').addEventListener('change', runSearch);
 
   // Clear filters
   document.getElementById('btn-clear-filters').addEventListener('click', () => {
@@ -410,6 +423,7 @@ function bindEvents() {
     document.getElementById('f-max-dur').value          = '';
     document.getElementById('f-tickets').value          = '';
     document.getElementById('f-hide-soldout').checked   = false;
+    document.getElementById('f-hide-conflicts').checked = false;
     runSearch();
   });
 
