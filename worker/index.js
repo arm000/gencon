@@ -96,11 +96,11 @@ async function handlePostWatch(request, env) {
 
       const prefs = await getPrefs(env);
       if (prefs.email || prefs.phone) {
-        await sendNotifications(prefs, [{ searchName: name, items: matches.map(ev => ({ ev, reason: 'new' })) }], env);
+        const { errors } = await sendNotifications(prefs, [{ searchName: name, items: matches.map(ev => ({ ev, reason: 'new' })) }], env);
+        if (errors.length) console.error('Initial notification errors:', errors);
       }
     }
   } catch (e) {
-    // Non-fatal: watch was saved, initial notification failed
     console.error('Initial notification failed:', e.message);
   }
 
@@ -235,7 +235,10 @@ async function sendNotifications(prefs, groups, env) {
   if (prefs.phone && prefs.sms_on && env.TWILIO_ACCOUNT_SID) {
     tasks.push(sendSms(prefs.phone, smsBody, env));
   }
-  await Promise.allSettled(tasks);
+  const results = await Promise.allSettled(tasks);
+  const errors = results.filter(r => r.status === 'rejected').map(r => r.reason?.message || String(r.reason));
+  if (errors.length) console.error('Notification errors:', errors);
+  return { errors };
 }
 
 function buildEmailBody(groups) {
@@ -279,10 +282,8 @@ async function sendEmail(to, body, count, env) {
       text: body,
     }),
   });
-  if (!resp.ok) {
-    const err = await resp.text();
-    throw new Error(`Resend error ${resp.status}: ${err}`);
-  }
+  const respText = await resp.text();
+  if (!resp.ok) throw new Error(`Resend error ${resp.status}: ${respText}`);
 }
 
 async function sendSms(to, body, env) {
@@ -303,10 +304,8 @@ async function sendSms(to, body, env) {
       }).toString(),
     }
   );
-  if (!resp.ok) {
-    const err = await resp.text();
-    throw new Error(`Twilio error ${resp.status}: ${err}`);
-  }
+  const respText = await resp.text();
+  if (!resp.ok) throw new Error(`Twilio error ${resp.status}: ${respText}`);
 }
 
 // ── Event fetching & search ───────────────────────────────────
