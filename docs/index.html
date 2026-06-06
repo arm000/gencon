@@ -184,15 +184,6 @@
         <label class="sync-field">Email address
           <input type="email" id="notif-email" placeholder="you@example.com" autocomplete="email">
         </label>
-        <label class="sync-field">Phone number (for SMS)
-          <input type="tel" id="notif-phone" placeholder="+15551234567" autocomplete="tel">
-        </label>
-        <label class="filter-checkbox sync-remember">
-          <input type="checkbox" id="notif-email-on" checked> Send email notifications
-        </label>
-        <label class="filter-checkbox sync-remember">
-          <input type="checkbox" id="notif-sms-on" checked> Send SMS notifications
-        </label>
       </div>
       <div id="notif-settings-status" style="display:none"></div>
     </div>
@@ -338,22 +329,14 @@ async function openNotifSettings() {
     const resp = await fetch(`${AI_WORKER_URL}/prefs`);
     if (resp.ok) {
       const p = await resp.json();
-      document.getElementById('notif-email').value      = p.email    || '';
-      document.getElementById('notif-phone').value      = p.phone    || '';
-      document.getElementById('notif-email-on').checked = p.email_on !== false;
-      document.getElementById('notif-sms-on').checked   = p.sms_on   !== false;
+      document.getElementById('notif-email').value = p.email || '';
     }
   } catch { /* leave defaults */ }
   document.getElementById('notif-settings-modal').classList.add('open');
 }
 
 async function doSaveNotifSettings() {
-  const prefs = {
-    email:    document.getElementById('notif-email').value.trim(),
-    phone:    document.getElementById('notif-phone').value.trim(),
-    email_on: document.getElementById('notif-email-on').checked ? '1' : '0',
-    sms_on:   document.getElementById('notif-sms-on').checked   ? '1' : '0',
-  };
+  const prefs = { email: document.getElementById('notif-email').value.trim() };
   document.getElementById('notif-settings-save').disabled = true;
   try {
     const resp = await fetch(`${AI_WORKER_URL}/prefs`, {

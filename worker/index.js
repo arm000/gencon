@@ -95,7 +95,7 @@ async function handlePostWatch(request, env) {
       await env.DB.batch(stmts);
 
       const prefs = await getPrefs(env);
-      if (prefs.email || prefs.phone) {
+      if (prefs.email) {
         const { errors } = await sendNotifications(prefs, [{ searchName: name, items: matches.map(ev => ({ ev, reason: 'new' })) }], env);
         if (errors.length) console.error('Initial notification errors:', errors);
       }
@@ -124,15 +124,9 @@ async function handlePostPrefs(request, env) {
   let body;
   try { body = await request.json(); } catch { return corsResponse(JSON.stringify({ error: 'Invalid JSON' }), 400); }
 
-  const allowed = ['email', 'phone', 'email_on', 'sms_on'];
   const stmts = [];
-  for (const key of allowed) {
-    if (key in body) {
-      stmts.push(
-        env.DB.prepare('INSERT OR REPLACE INTO user_prefs (key, value) VALUES (?, ?)')
-          .bind(key, String(body[key]))
-      );
-    }
+  if ('email' in body) {
+    stmts.push(env.DB.prepare('INSERT OR REPLACE INTO user_prefs (key, value) VALUES (?, ?)').bind('email', String(body.email)));
   }
   if (stmts.length) await env.DB.batch(stmts);
   return corsResponse(JSON.stringify({ ok: true }));
@@ -141,21 +135,14 @@ async function handlePostPrefs(request, env) {
 async function getPrefs(env) {
   const { results } = await env.DB.prepare('SELECT key, value FROM user_prefs').all();
   const map = Object.fromEntries((results || []).map(r => [r.key, r.value]));
-  return {
-    email:     map.email    || '',
-    phone:     map.phone    || '',
-    email_on:  map.email_on !== '0',
-    sms_on:    map.sms_on   !== '0',
-  };
+  return { email: map.email || '' };
 }
 
 // ── Cron: notification check ──────────────────────────────────
 
 async function runNotificationCheck(env) {
   const prefs = await getPrefs(env);
-  const canEmail = prefs.email    && prefs.email_on;
-  const canSms   = prefs.phone    && prefs.sms_on;
-  if (!canEmail && !canSms) return;
+  if (!prefs.email) return;
 
   const events = await fetchEvents();
 
@@ -224,21 +211,14 @@ async function runNotificationCheck(env) {
 
 async function sendNotifications(prefs, groups, env) {
   const totalItems = groups.reduce((n, g) => n + g.items.length, 0);
-
-  const emailBody = buildEmailBody(groups);
-  const smsBody   = buildSmsBody(groups, totalItems);
-
-  const tasks = [];
-  if (prefs.email && prefs.email_on && env.RESEND_API_KEY) {
-    tasks.push(sendEmail(prefs.email, emailBody, totalItems, env));
+  if (!prefs.email || !env.RESEND_API_KEY) return { errors: [] };
+  try {
+    await sendEmail(prefs.email, buildEmailBody(groups), totalItems, env);
+  } catch (e) {
+    console.error('Email error:', e.message);
+    return { errors: [e.message] };
   }
-  if (prefs.phone && prefs.sms_on && env.TWILIO_ACCOUNT_SID) {
-    tasks.push(sendSms(prefs.phone, smsBody, env));
-  }
-  const results = await Promise.allSettled(tasks);
-  const errors = results.filter(r => r.status === 'rejected').map(r => r.reason?.message || String(r.reason));
-  if (errors.length) console.error('Notification errors:', errors);
-  return { errors };
+  return { errors: [] };
 }
 
 function buildEmailBody(groups) {
@@ -262,11 +242,6 @@ function buildEmailBody(groups) {
   return lines.join('\n');
 }
 
-function buildSmsBody(groups, totalItems) {
-  const searchNames = groups.map(g => `"${g.searchName}"`).join(', ');
-  return `GenCon: ${totalItems} new match${totalItems !== 1 ? 'es' : ''} for ${searchNames}. Check your email for details.`;
-}
-
 async function sendEmail(to, body, count, env) {
   const subject = `GenCon Watch: ${count} new match${count !== 1 ? 'es' : ''}`;
   const resp = await fetch('https://api.resend.com/emails', {
@@ -284,28 +259,6 @@ async function sendEmail(to, body, count, env) {
   });
   const respText = await resp.text();
   if (!resp.ok) throw new Error(`Resend error ${resp.status}: ${respText}`);
-}
-
-async function sendSms(to, body, env) {
-  const phone = to.startsWith('+') ? to : `+1${to.replace(/\D/g, '')}`;
-  const creds = btoa(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`);
-  const resp = await fetch(
-    `https://api.twilio.com/2010-04-01/Accounts/${env.TWILIO_ACCOUNT_SID}/Messages.json`,
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': `Basic ${creds}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({
-        From: env.TWILIO_FROM_NUMBER,
-        To:   phone,
-        Body: body,
-      }).toString(),
-    }
-  );
-  const respText = await resp.text();
-  if (!resp.ok) throw new Error(`Twilio error ${resp.status}: ${respText}`);
 }
 
 // ── Event fetching & search ───────────────────────────────────

@@ -15,6 +15,3 @@ crons = ["0 */2 * * *"]
 #   npx wrangler secret put ANTHROPIC_API_KEY
 #   npx wrangler secret put RESEND_API_KEY
 #   npx wrangler secret put RESEND_FROM_EMAIL   (e.g. "GenCon Watch <you@yourdomain.com>")
-#   npx wrangler secret put TWILIO_ACCOUNT_SID
-#   npx wrangler secret put TWILIO_AUTH_TOKEN
-#   npx wrangler secret put TWILIO_FROM_NUMBER  (E.164 format, e.g. +15551234567)
