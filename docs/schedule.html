@@ -30,7 +30,8 @@
       <div class="card">
         <div class="schedule-toolbar">
           <h2 style="margin:0;font-size:1.05rem">My Schedule</h2>
-          <button class="btn btn-secondary btn-sm" id="btn-export">Export JSON</button>
+          <button class="btn btn-primary btn-sm"    id="btn-sync-gencon">Sync GenCon.com</button>
+          <button class="btn btn-secondary btn-sm"  id="btn-export">Export JSON</button>
           <label class="btn btn-secondary btn-sm" style="cursor:pointer">
             Import JSON
             <input type="file" id="import-input" accept=".json" style="display:none">
@@ -140,6 +141,40 @@
 
   </div><!-- /.schedule-layout -->
 </main>
+
+<!-- GenCon Sync Modal -->
+<div class="modal-overlay" id="sync-modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="sync-title">
+    <div class="modal-header">
+      <h2 id="sync-title">Sync from GenCon.com</h2>
+      <button class="modal-close" id="sync-close" aria-label="Close">×</button>
+    </div>
+    <div class="modal-body">
+      <p style="margin:0 0 1rem;font-size:.9rem;color:var(--text-muted)">
+        Enter your GenCon.com credentials to import your registered events.
+      </p>
+      <div class="sync-form">
+        <label class="sync-field">
+          Email
+          <input type="email" id="sync-email" autocomplete="email" placeholder="you@example.com">
+        </label>
+        <label class="sync-field">
+          Password
+          <input type="password" id="sync-password" autocomplete="current-password">
+        </label>
+        <label class="filter-checkbox sync-remember">
+          <input type="checkbox" id="sync-remember">
+          Remember credentials
+        </label>
+      </div>
+      <div id="sync-status" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary"   id="sync-submit">Sync</button>
+      <button class="btn btn-secondary" id="sync-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
 
 <!-- Detail Modal -->
 <div class="modal-overlay" id="detail-modal">
@@ -411,6 +446,9 @@ function promptConflict(id, conflicts) {
 let suggestTimer = null;
 
 function bindEvents() {
+  // Sync GenCon.com
+  document.getElementById('btn-sync-gencon').addEventListener('click', openSyncModal);
+
   // Export
   document.getElementById('btn-export').addEventListener('click', () => {
     exportSchedule();
@@ -478,8 +516,14 @@ function bindEvents() {
     if (pendingAddId) handleAdd(pendingAddId, true);
   });
 
+  // Sync modal buttons
+  document.getElementById('sync-close').addEventListener('click',  () => closeModal('sync-modal'));
+  document.getElementById('sync-cancel').addEventListener('click', () => closeModal('sync-modal'));
+  document.getElementById('sync-submit').addEventListener('click', doSync);
+  document.getElementById('sync-password').addEventListener('keydown', e => { if (e.key === 'Enter') doSync(); });
+
   // Overlay click to close
-  for (const id of ['detail-modal', 'conflict-modal']) {
+  for (const id of ['detail-modal', 'conflict-modal', 'sync-modal']) {
     document.getElementById(id).addEventListener('click', e => {
       if (e.target === document.getElementById(id)) closeModal(id);
     });
@@ -488,7 +532,7 @@ function bindEvents() {
   // Escape key
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
-      for (const id of ['conflict-modal', 'detail-modal']) {
+      for (const id of ['sync-modal', 'conflict-modal', 'detail-modal']) {
         if (document.getElementById(id).classList.contains('open')) { closeModal(id); break; }
       }
     }
@@ -497,6 +541,86 @@ function bindEvents() {
 
 function closeModal(id) {
   document.getElementById(id).classList.remove('open');
+}
+
+// ── GenCon Sync ───────────────────────────────────────────────
+const SYNC_CREDS_KEY = 'gencon-sync-creds';
+
+function openSyncModal() {
+  const saved = (() => { try { return JSON.parse(localStorage.getItem(SYNC_CREDS_KEY)); } catch { return null; } })();
+  if (saved) {
+    document.getElementById('sync-email').value    = saved.email    || '';
+    document.getElementById('sync-password').value = saved.password || '';
+    document.getElementById('sync-remember').checked = true;
+  }
+  setSyncStatus('');
+  setSyncBusy(false);
+  document.getElementById('sync-modal').classList.add('open');
+  document.getElementById(saved ? 'sync-submit' : 'sync-email').focus();
+}
+
+function setSyncStatus(msg, type = '') {
+  const el = document.getElementById('sync-status');
+  if (!msg) { el.style.display = 'none'; return; }
+  el.style.display = '';
+  el.className = `sync-status${type ? ' sync-status-' + type : ''}`;
+  el.textContent = msg;
+}
+
+function setSyncBusy(busy) {
+  document.getElementById('sync-submit').disabled = busy;
+  document.getElementById('sync-cancel').disabled = busy;
+  document.getElementById('sync-close').disabled  = busy;
+  document.getElementById('sync-submit').textContent = busy ? 'Syncing…' : 'Sync';
+}
+
+async function doSync() {
+  const email    = document.getElementById('sync-email').value.trim();
+  const password = document.getElementById('sync-password').value;
+  const remember = document.getElementById('sync-remember').checked;
+
+  if (!email || !password) { setSyncStatus('Email and password are required.', 'err'); return; }
+
+  setSyncBusy(true);
+  setSyncStatus('Logging in…');
+
+  try {
+    const resp = await fetch(`${AI_WORKER_URL}/sync-gencon`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+
+    const ids = data.ids || [];
+    if (!ids.length) {
+      setSyncStatus('No registered events found on GenCon.com.', 'warn');
+      setSyncBusy(false);
+      return;
+    }
+
+    if (remember) {
+      localStorage.setItem(SYNC_CREDS_KEY, JSON.stringify({ email, password }));
+    } else {
+      localStorage.removeItem(SYNC_CREDS_KEY);
+    }
+
+    let added = 0, skipped = 0;
+    for (const id of ids) {
+      const result = addEvent(id, true);
+      if (result.status === 'ok') added++;
+      else skipped++;
+    }
+
+    closeModal('sync-modal');
+    renderSchedule();
+    renderSuggestions();
+    showToast(`Synced: ${added} added, ${skipped} already scheduled`);
+  } catch (err) {
+    setSyncStatus(err.message, 'err');
+    setSyncBusy(false);
+  }
 }
 
 // ── Utilities ─────────────────────────────────────────────────

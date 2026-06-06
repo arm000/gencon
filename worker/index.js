@@ -12,52 +12,139 @@
  * Optional: restrict ALLOWED_ORIGIN to your GitHub Pages URL.
  */
 
-const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
-const ANTHROPIC_VERSION = '2023-06-01';
-const ALLOWED_ORIGIN = '*';   // tighten to 'https://yourname.github.io' if desired
+const ANTHROPIC_API      = 'https://api.anthropic.com/v1/messages';
+const ANTHROPIC_VERSION  = '2023-06-01';
+const ALLOWED_ORIGIN     = '*';
+const GENCON_BASE        = 'https://www.gencon.com';
+const GENCON_UA          = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
+const GAME_ID_RE         = /\b[A-Z]{2,6}26[A-Z0-9]{2,}\b/g;
 
 export default {
   async fetch(request, env) {
-    // CORS preflight
-    if (request.method === 'OPTIONS') {
-      return corsResponse(null, 204);
-    }
+    if (request.method === 'OPTIONS') return corsResponse(null, 204);
+    if (request.method !== 'POST')   return corsResponse('Method not allowed', 405);
 
-    if (request.method !== 'POST') {
-      return corsResponse('Method not allowed', 405);
-    }
+    const path = new URL(request.url).pathname;
 
-    if (!env.ANTHROPIC_API_KEY) {
-      return corsResponse(JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured' }), 500);
-    }
-
-    let body;
-    try {
-      body = await request.text();
-    } catch {
-      return corsResponse(JSON.stringify({ error: 'Failed to read request body' }), 400);
-    }
-
-    // Forward to Anthropic, injecting the secret key
-    let upstream;
-    try {
-      upstream = await fetch(ANTHROPIC_API, {
-        method: 'POST',
-        headers: {
-          'Content-Type':    'application/json',
-          'x-api-key':       env.ANTHROPIC_API_KEY,
-          'anthropic-version': ANTHROPIC_VERSION,
-        },
-        body,
-      });
-    } catch (err) {
-      return corsResponse(JSON.stringify({ error: `Upstream fetch failed: ${err.message}` }), 502);
-    }
-
-    const responseBody = await upstream.text();
-    return corsResponse(responseBody, upstream.status, 'application/json');
+    if (path === '/sync-gencon') return handleGenconSync(request);
+    return handleAnthropic(request, env);
   },
 };
+
+// ── Anthropic proxy ───────────────────────────────────────────
+async function handleAnthropic(request, env) {
+  if (!env.ANTHROPIC_API_KEY)
+    return corsResponse(JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured' }), 500);
+
+  let body;
+  try { body = await request.text(); }
+  catch { return corsResponse(JSON.stringify({ error: 'Failed to read request body' }), 400); }
+
+  let upstream;
+  try {
+    upstream = await fetch(ANTHROPIC_API, {
+      method: 'POST',
+      headers: {
+        'Content-Type':      'application/json',
+        'x-api-key':         env.ANTHROPIC_API_KEY,
+        'anthropic-version': ANTHROPIC_VERSION,
+      },
+      body,
+    });
+  } catch (err) {
+    return corsResponse(JSON.stringify({ error: `Upstream fetch failed: ${err.message}` }), 502);
+  }
+
+  return corsResponse(await upstream.text(), upstream.status);
+}
+
+// ── GenCon sync ───────────────────────────────────────────────
+async function handleGenconSync(request) {
+  let body;
+  try { body = await request.json(); }
+  catch { return corsResponse(JSON.stringify({ error: 'Invalid JSON body' }), 400); }
+
+  const { email, password } = body || {};
+  if (!email || !password)
+    return corsResponse(JSON.stringify({ error: 'email and password required' }), 400);
+
+  try {
+    const ids = await scrapeGencon(email, password);
+    return corsResponse(JSON.stringify({ ids }));
+  } catch (err) {
+    return corsResponse(JSON.stringify({ error: err.message }), 500);
+  }
+}
+
+function updateJar(jar, headers) {
+  for (const [k, v] of headers) {
+    if (k.toLowerCase() !== 'set-cookie') continue;
+    const eqIdx = v.indexOf('=');
+    if (eqIdx > -1) jar[v.slice(0, eqIdx).trim()] = v.slice(eqIdx + 1).split(';')[0].trim();
+  }
+}
+
+function cookieStr(jar) {
+  return Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; ');
+}
+
+async function scrapeGencon(email, password) {
+  const jar = {};
+  const baseHeaders = {
+    'User-Agent': GENCON_UA,
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  };
+
+  // 1. GET /login — grab session cookie + CSRF token
+  const loginResp = await fetch(`${GENCON_BASE}/login`, { headers: baseHeaders });
+  updateJar(jar, loginResp.headers);
+  const loginHtml = await loginResp.text();
+  const tokenMatch = loginHtml.match(/name="authenticity_token"[^>]*value="([^"]+)"/);
+  if (!tokenMatch) throw new Error('Could not find CSRF token on login page');
+
+  // 2. POST /users/sign_in — use redirect:manual to capture the new session cookie
+  const signInResp = await fetch(`${GENCON_BASE}/users/sign_in`, {
+    method: 'POST',
+    headers: {
+      ...baseHeaders,
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Cookie':   cookieStr(jar),
+      'Referer':  `${GENCON_BASE}/login`,
+    },
+    body: new URLSearchParams({
+      'authenticity_token': tokenMatch[1],
+      'user[email]':        email,
+      'user[password]':     password,
+      'user[remember_me]':  '0',
+      'commit':             'Sign In',
+    }).toString(),
+    redirect: 'manual',
+  });
+  updateJar(jar, signInResp.headers);
+
+  const location = signInResp.headers.get('location') || '';
+  if (signInResp.status >= 400 || location.includes('/login') || location.includes('sign_in')) {
+    throw new Error('Login failed — check your email and password');
+  }
+
+  // Follow the post-login redirect
+  const afterLogin = await fetch(
+    location.startsWith('http') ? location : `${GENCON_BASE}${location}`,
+    { headers: { ...baseHeaders, 'Cookie': cookieStr(jar) } },
+  );
+  updateJar(jar, afterLogin.headers);
+  if ((await afterLogin.text()).includes('Invalid Email or password')) {
+    throw new Error('Login failed — check your email and password');
+  }
+
+  // 3. GET /my_packets
+  const packetsResp = await fetch(`${GENCON_BASE}/my_packets`, {
+    headers: { ...baseHeaders, 'Cookie': cookieStr(jar) },
+  });
+  if (packetsResp.url?.includes('/login')) throw new Error('Session not authenticated after login');
+  const html = await packetsResp.text();
+  return [...new Set(html.match(GAME_ID_RE) || [])];
+}
 
 function corsResponse(body, status = 200, contentType = 'application/json') {
   return new Response(body, {

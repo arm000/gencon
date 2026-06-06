@@ -10,3 +10,4 @@ events.zip
 events.csv
 schedule.json
 worker/.env
+.env

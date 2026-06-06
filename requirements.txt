@@ -2,3 +2,4 @@ requests
 tabulate
 openpyxl
 anthropic
+python-dotenv

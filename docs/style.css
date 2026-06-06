@@ -488,6 +488,14 @@ table.event-table tr.row-conflict:hover td { background: #ffeeee; }
 
 .schedule-toolbar .schedule-count { margin-left: auto; font-size: .82rem; color: var(--text-muted); }
 
+.sync-form { display: flex; flex-direction: column; gap: .75rem; }
+.sync-field { display: flex; flex-direction: column; gap: .3rem; font-size: .85rem; color: var(--text-muted); }
+.sync-field input { padding: .4rem .6rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: .95rem; }
+.sync-remember { margin-top: .25rem; }
+.sync-status { margin-top: .75rem; padding: .5rem .75rem; border-radius: var(--radius); font-size: .875rem; }
+.sync-status-err  { background: #fff0f0; color: var(--danger-text); }
+.sync-status-warn { background: #fffbea; color: #7a5c00; }
+
 /* ── Loading / empty states ─────────────────────────────── */
 .loading-msg {
   text-align: center;
