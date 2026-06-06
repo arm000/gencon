@@ -59,6 +59,16 @@
         Hide conflicts
       </label>
       <button class="btn btn-secondary btn-sm" id="btn-clear-filters">Clear</button>
+      <button class="btn btn-secondary btn-sm" id="btn-save-search">Save Search</button>
+    </div>
+
+    <!-- Saved searches panel (hidden until at least one exists) -->
+    <div id="watches-panel" class="watches-panel" style="display:none">
+      <div class="watches-header">
+        <span class="watches-title">Saved Searches</span>
+        <button class="btn btn-secondary btn-sm" id="btn-notif-settings">Notifications…</button>
+      </div>
+      <div id="watches-list"></div>
     </div>
 
     <div class="results-meta" id="results-meta"></div>
@@ -139,6 +149,60 @@
   </div>
 </div>
 
+<!-- Save Search Modal -->
+<div class="modal-overlay" id="save-search-modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="save-search-title">
+    <div class="modal-header">
+      <h2 id="save-search-title">Save Search</h2>
+      <button class="modal-close" id="save-search-close" aria-label="Close">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="sync-form">
+        <label class="sync-field">Name
+          <input type="text" id="save-search-name" placeholder="e.g. Friday evening RPGs" autocomplete="off">
+        </label>
+        <div id="save-search-preview" class="watch-filter-summary"></div>
+      </div>
+      <div id="save-search-status" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" id="save-search-submit">Save</button>
+      <button class="btn btn-secondary" id="save-search-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Notification Settings Modal -->
+<div class="modal-overlay" id="notif-settings-modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="notif-settings-title">
+    <div class="modal-header">
+      <h2 id="notif-settings-title">Notification Settings</h2>
+      <button class="modal-close" id="notif-settings-close" aria-label="Close">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="sync-form">
+        <label class="sync-field">Email address
+          <input type="email" id="notif-email" placeholder="you@example.com" autocomplete="email">
+        </label>
+        <label class="sync-field">Phone number (for SMS)
+          <input type="tel" id="notif-phone" placeholder="+15551234567" autocomplete="tel">
+        </label>
+        <label class="filter-checkbox sync-remember">
+          <input type="checkbox" id="notif-email-on" checked> Send email notifications
+        </label>
+        <label class="filter-checkbox sync-remember">
+          <input type="checkbox" id="notif-sms-on" checked> Send SMS notifications
+        </label>
+      </div>
+      <div id="notif-settings-status" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" id="notif-settings-save">Save</button>
+      <button class="btn btn-secondary" id="notif-settings-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 <footer><span class="version-label"></span></footer>
 
@@ -150,6 +214,166 @@ let displayedCount = 0;
 let detailEventId  = null;
 let sortCol        = null;  // active sort column key, or null
 let sortDir        = 1;     // 1 = asc, -1 = desc
+
+// ── Watches (saved searches) ─────────────────────────────────
+const WATCHES_CACHE_KEY = 'gencon-watches-cache';
+
+async function loadWatches() {
+  try {
+    const resp = await fetch(`${AI_WORKER_URL}/watches`);
+    if (!resp.ok) throw new Error(resp.status);
+    const watches = await resp.json();
+    localStorage.setItem(WATCHES_CACHE_KEY, JSON.stringify(watches));
+    renderWatches(watches);
+  } catch {
+    // Fall back to cache so the panel still shows up offline
+    const cached = localStorage.getItem(WATCHES_CACHE_KEY);
+    if (cached) renderWatches(JSON.parse(cached));
+  }
+}
+
+function renderWatches(watches) {
+  const panel = document.getElementById('watches-panel');
+  const list  = document.getElementById('watches-list');
+  if (!watches.length) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+  list.innerHTML = watches.map(w => `
+    <div class="watch-row" data-id="${esc(w.id)}">
+      <span class="watch-name">${esc(w.name)}</span>
+      <span class="watch-filter-summary">${esc(filterSummary(JSON.parse(w.filters)))}</span>
+      <button class="btn btn-secondary btn-sm btn-watch-apply" data-filters="${esc(w.filters)}">Apply</button>
+      <button class="btn btn-secondary btn-sm btn-watch-delete" data-id="${esc(w.id)}">✕</button>
+    </div>`).join('');
+}
+
+function filterSummary(f) {
+  const parts = [];
+  if (f.query)     parts.push(`"${f.query}"`);
+  if (f.type)      parts.push(`Type: ${f.type}`);
+  if (f.day)       parts.push(`Day: ${f.day}`);
+  if (f.minDur)    parts.push(`≥${f.minDur}h`);
+  if (f.maxDur)    parts.push(`≤${f.maxDur}h`);
+  if (f.minTickets > 0) parts.push(`≥${f.minTickets} tickets`);
+  return parts.join(' · ') || 'All events';
+}
+
+async function deleteWatch(id) {
+  try {
+    await fetch(`${AI_WORKER_URL}/watches/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  } catch { /* best-effort */ }
+  const cached = JSON.parse(localStorage.getItem(WATCHES_CACHE_KEY) || '[]').filter(w => w.id !== id);
+  localStorage.setItem(WATCHES_CACHE_KEY, JSON.stringify(cached));
+  renderWatches(cached);
+}
+
+function applyWatch(filtersJson) {
+  const f = JSON.parse(filtersJson);
+  document.getElementById('q').value             = f.query      || '';
+  document.getElementById('f-type').value        = f.type       || '';
+  document.getElementById('f-day').value         = f.day        || '';
+  document.getElementById('f-min-dur').value     = f.minDur     || '';
+  document.getElementById('f-max-dur').value     = f.maxDur     || '';
+  document.getElementById('f-tickets').value     = f.minTickets || '';
+  document.getElementById('f-hide-soldout').checked   = false;
+  document.getElementById('f-hide-conflicts').checked = false;
+  runSearch();
+}
+
+// ── Save Search modal ────────────────────────────────────────
+function openSaveSearchModal() {
+  const filters = getFilters();
+  // Strip hideConflicts from saved filter — schedule changes over time
+  const { hideConflicts: _, ...saveFilters } = filters;
+  document.getElementById('save-search-name').value = '';
+  document.getElementById('save-search-preview').textContent = filterSummary(saveFilters);
+  document.getElementById('save-search-status').style.display = 'none';
+  document.getElementById('save-search-modal').classList.add('open');
+  document.getElementById('save-search-modal')._filters = saveFilters;
+  document.getElementById('save-search-name').focus();
+}
+
+async function doSaveSearch() {
+  const name    = document.getElementById('save-search-name').value.trim();
+  const filters = document.getElementById('save-search-modal')._filters;
+  if (!name) { setSaveStatus('Please enter a name.', 'err'); return; }
+
+  document.getElementById('save-search-submit').disabled = true;
+  setSaveStatus('Saving…');
+
+  try {
+    const resp = await fetch(`${AI_WORKER_URL}/watches`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, filters }),
+    });
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+
+    // Update cache
+    const cached = JSON.parse(localStorage.getItem(WATCHES_CACHE_KEY) || '[]');
+    cached.unshift(data);
+    localStorage.setItem(WATCHES_CACHE_KEY, JSON.stringify(cached));
+    renderWatches(cached);
+
+    closeModal('save-search-modal');
+    showToast(`Saved search: ${name}`);
+  } catch (err) {
+    setSaveStatus(err.message, 'err');
+  } finally {
+    document.getElementById('save-search-submit').disabled = false;
+  }
+}
+
+function setSaveStatus(msg, type) {
+  const el = document.getElementById('save-search-status');
+  el.style.display = '';
+  el.className = `sync-status${type === 'err' ? ' sync-status-err' : ''}`;
+  el.textContent = msg;
+}
+
+// ── Notification Settings modal ──────────────────────────────
+async function openNotifSettings() {
+  document.getElementById('notif-settings-status').style.display = 'none';
+  try {
+    const resp = await fetch(`${AI_WORKER_URL}/prefs`);
+    if (resp.ok) {
+      const p = await resp.json();
+      document.getElementById('notif-email').value      = p.email    || '';
+      document.getElementById('notif-phone').value      = p.phone    || '';
+      document.getElementById('notif-email-on').checked = p.email_on !== false;
+      document.getElementById('notif-sms-on').checked   = p.sms_on   !== false;
+    }
+  } catch { /* leave defaults */ }
+  document.getElementById('notif-settings-modal').classList.add('open');
+}
+
+async function doSaveNotifSettings() {
+  const prefs = {
+    email:    document.getElementById('notif-email').value.trim(),
+    phone:    document.getElementById('notif-phone').value.trim(),
+    email_on: document.getElementById('notif-email-on').checked ? '1' : '0',
+    sms_on:   document.getElementById('notif-sms-on').checked   ? '1' : '0',
+  };
+  document.getElementById('notif-settings-save').disabled = true;
+  try {
+    const resp = await fetch(`${AI_WORKER_URL}/prefs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(prefs),
+    });
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+    closeModal('notif-settings-modal');
+    showToast('Notification settings saved');
+  } catch (err) {
+    const el = document.getElementById('notif-settings-status');
+    el.style.display = '';
+    el.className = 'sync-status sync-status-err';
+    el.textContent = err.message;
+  } finally {
+    document.getElementById('notif-settings-save').disabled = false;
+  }
+}
 
 // ── Boot ────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
@@ -166,6 +390,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   populateTypeFilter();
   updateHeaderCount();
   runSearch();
+  loadWatches();
   bindEvents();
 });
 
@@ -515,8 +740,31 @@ function bindEvents() {
     if (pendingAddId) handleAdd(pendingAddId, true);
   });
 
+  // Save Search button
+  document.getElementById('btn-save-search').addEventListener('click', openSaveSearchModal);
+  document.getElementById('save-search-close').addEventListener('click',  () => closeModal('save-search-modal'));
+  document.getElementById('save-search-cancel').addEventListener('click', () => closeModal('save-search-modal'));
+  document.getElementById('save-search-submit').addEventListener('click', doSaveSearch);
+  document.getElementById('save-search-name').addEventListener('keydown', e => {
+    if (e.key === 'Enter') doSaveSearch();
+  });
+
+  // Notification settings
+  document.getElementById('btn-notif-settings').addEventListener('click', openNotifSettings);
+  document.getElementById('notif-settings-close').addEventListener('click',  () => closeModal('notif-settings-modal'));
+  document.getElementById('notif-settings-cancel').addEventListener('click', () => closeModal('notif-settings-modal'));
+  document.getElementById('notif-settings-save').addEventListener('click', doSaveNotifSettings);
+
+  // Saved searches list (delegated)
+  document.getElementById('watches-list').addEventListener('click', e => {
+    const applyBtn  = e.target.closest('.btn-watch-apply');
+    const deleteBtn = e.target.closest('.btn-watch-delete');
+    if (applyBtn)  applyWatch(applyBtn.dataset.filters);
+    if (deleteBtn) deleteWatch(deleteBtn.dataset.id);
+  });
+
   // Close modals on overlay click
-  for (const id of ['detail-modal', 'alts-modal', 'conflict-modal']) {
+  for (const id of ['detail-modal', 'alts-modal', 'conflict-modal', 'save-search-modal', 'notif-settings-modal']) {
     document.getElementById(id).addEventListener('click', e => {
       if (e.target === document.getElementById(id)) closeModal(id);
     });
@@ -525,7 +773,7 @@ function bindEvents() {
   // Close on Escape
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
-      for (const id of ['conflict-modal', 'alts-modal', 'detail-modal']) {
+      for (const id of ['conflict-modal', 'alts-modal', 'detail-modal', 'save-search-modal', 'notif-settings-modal']) {
         if (document.getElementById(id).classList.contains('open')) {
           closeModal(id);
           break;
