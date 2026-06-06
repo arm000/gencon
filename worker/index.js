@@ -17,7 +17,6 @@ const ANTHROPIC_VERSION  = '2023-06-01';
 const ALLOWED_ORIGIN     = '*';
 const GENCON_BASE        = 'https://www.gencon.com';
 const GENCON_UA          = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
-const GAME_ID_RE         = /\b[A-Z]{2,6}26[A-Z0-9]{2,}\b/g;
 
 export default {
   async fetch(request, env) {
@@ -69,8 +68,8 @@ async function handleGenconSync(request) {
     return corsResponse(JSON.stringify({ error: 'email and password required' }), 400);
 
   try {
-    const ids = await scrapeGencon(email, password);
-    return corsResponse(JSON.stringify({ ids }));
+    const event_ids = await scrapeGencon(email, password);
+    return corsResponse(JSON.stringify({ event_ids }));
   } catch (err) {
     return corsResponse(JSON.stringify({ error: err.message }), 500);
   }
@@ -137,13 +136,34 @@ async function scrapeGencon(email, password) {
     throw new Error('Login failed — check your email and password');
   }
 
-  // 3. GET /my_packets
-  const packetsResp = await fetch(`${GENCON_BASE}/my_packets`, {
+  // 3. GET /profile — extract contactId from user-id attribute
+  const profileResp = await fetch(`${GENCON_BASE}/profile`, {
     headers: { ...baseHeaders, 'Cookie': cookieStr(jar) },
   });
-  if (packetsResp.url?.includes('/login')) throw new Error('Session not authenticated after login');
-  const html = await packetsResp.text();
-  return [...new Set(html.match(GAME_ID_RE) || [])];
+  if (profileResp.url?.includes('/login')) throw new Error('Session not authenticated after login');
+  const profileHtml = await profileResp.text();
+  const contactMatch = profileHtml.match(/user-id=['"](\d+)['"]/) ||
+                       profileHtml.match(/"userId":(\d+)/);
+  if (!contactMatch) throw new Error('Could not find contact ID on profile page');
+  const contactId = contactMatch[1];
+
+  // 4. GET /api/v2/schedule — fetch all pages
+  const eventIds = [];
+  let page = 1, totalPages = 1;
+  do {
+    const schedResp = await fetch(
+      `${GENCON_BASE}/api/v2/schedule?contact_id=${contactId}&page=${page}`,
+      { headers: { ...baseHeaders, 'Cookie': cookieStr(jar), 'Accept': 'application/json' } },
+    );
+    const sched = await schedResp.json();
+    for (const ev of sched.data || []) {
+      if (ev.event_id) eventIds.push(ev.event_id);
+    }
+    totalPages = sched.total_num_of_pages || 1;
+    page++;
+  } while (page <= totalPages);
+
+  return [...new Set(eventIds)];
 }
 
 function corsResponse(body, status = 200, contentType = 'application/json') {

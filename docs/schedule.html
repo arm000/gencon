@@ -593,9 +593,23 @@ async function doSync() {
     const data = await resp.json();
     if (data.error) throw new Error(data.error);
 
-    const ids = data.ids || [];
-    if (!ids.length) {
+    const numericIds = data.event_ids || [];
+    if (!numericIds.length) {
       setSyncStatus('No registered events found on GenCon.com.', 'warn');
+      setSyncBusy(false);
+      return;
+    }
+
+    // Build a map from numeric event suffix → game_code (e.g. 310875 → "BGM26ND310875")
+    const numToGameCode = {};
+    for (const ev of ALL_EVENTS) {
+      const m = ev.id.match(/(\d+)$/);
+      if (m) numToGameCode[parseInt(m[1], 10)] = ev.id;
+    }
+    const ids = numericIds.map(n => numToGameCode[n]).filter(Boolean);
+
+    if (!ids.length) {
+      setSyncStatus('Registered events not found in local event data — try refreshing the page.', 'warn');
       setSyncBusy(false);
       return;
     }

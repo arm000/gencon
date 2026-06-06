@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Scrape registered event IDs from gencon.com/my_packets and print them,
+Scrape registered event IDs from gencon.com and print them,
 one per line, to stdout.
 
 Credentials are read from .env (GENCON_EMAIL / GENCON_PASSWORD) or
@@ -17,8 +17,7 @@ from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
-BASE       = "https://www.gencon.com"
-GAME_ID_RE = re.compile(r'\b[A-Z]{2,6}26[A-Z0-9]{2,}\b')
+BASE = "https://www.gencon.com"
 
 
 def login(session: requests.Session, email: str, password: str) -> None:
@@ -46,12 +45,35 @@ def login(session: requests.Session, email: str, password: str) -> None:
     print(f"Logged in as {email}", file=sys.stderr)
 
 
-def fetch_ids(session: requests.Session) -> list[str]:
-    r = session.get(f"{BASE}/my_packets", timeout=15)
+def get_contact_id(session: requests.Session) -> str:
+    r = session.get(f"{BASE}/profile", timeout=15)
     if "/login" in r.url:
         raise RuntimeError("Redirected to login — session not authenticated")
     r.raise_for_status()
-    return list(dict.fromkeys(GAME_ID_RE.findall(r.text)))
+    m = re.search(r"user-id=['\"](\d+)['\"]", r.text) or re.search(r'"userId":(\d+)', r.text)
+    if not m:
+        raise RuntimeError("Could not find contact ID on profile page")
+    return m.group(1)
+
+
+def fetch_ids(session: requests.Session, contact_id: str) -> list[int]:
+    event_ids: list[int] = []
+    page, total_pages = 1, 1
+    while page <= total_pages:
+        r = session.get(
+            f"{BASE}/api/v2/schedule",
+            params={"contact_id": contact_id, "page": page},
+            headers={"Accept": "application/json"},
+            timeout=15,
+        )
+        r.raise_for_status()
+        data = r.json()
+        for ev in data.get("data", []):
+            if ev.get("event_id"):
+                event_ids.append(ev["event_id"])
+        total_pages = data.get("total_num_of_pages", 1)
+        page += 1
+    return list(dict.fromkeys(event_ids))
 
 
 def main() -> None:
@@ -67,16 +89,20 @@ def main() -> None:
     print("Logging in…", file=sys.stderr)
     login(session, email, password)
 
-    print("Fetching /my_packets…", file=sys.stderr)
-    ids = fetch_ids(session)
+    print("Fetching contact ID…", file=sys.stderr)
+    contact_id = get_contact_id(session)
+    print(f"Contact ID: {contact_id}", file=sys.stderr)
+
+    print("Fetching schedule…", file=sys.stderr)
+    ids = fetch_ids(session, contact_id)
 
     if not ids:
         print("No registered event IDs found.", file=sys.stderr)
         sys.exit(1)
 
     print(f"Found {len(ids)} event(s):", file=sys.stderr)
-    for gid in ids:
-        print(gid)
+    for eid in ids:
+        print(eid)
 
 
 if __name__ == "__main__":
