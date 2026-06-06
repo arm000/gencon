@@ -104,7 +104,7 @@ async function handlePostWatch(request, env) {
     console.error('Initial notification failed:', e.message);
   }
 
-  return corsResponse(JSON.stringify({ id, name, filters, created_at }), 201);
+  return corsResponse(JSON.stringify({ id, name, filters: JSON.stringify(filters), created_at }), 201);
 }
 
 async function handleDeleteWatch(pathname, env) {
