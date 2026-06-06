@@ -6,7 +6,7 @@ workers_dev     = true
 [[d1_databases]]
 binding  = "DB"
 database_name = "gencon-watches"
-database_id   = "REPLACE_WITH_DATABASE_ID"
+database_id   = "7d93bbdc-d39f-415c-b4bd-9fc4468af044"
 
 [triggers]
 crons = ["0 */2 * * *"]
